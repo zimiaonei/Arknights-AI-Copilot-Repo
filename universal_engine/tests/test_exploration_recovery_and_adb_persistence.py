@@ -561,6 +561,8 @@ class StopPreservesAdbAndAutoReconnectTests(unittest.TestCase):
 
             with patch("universal_engine.gui.controller.collect_dashboard_snapshot", side_effect=_fake_snapshot), \
                  patch.object(launcher_gui, "collect_dashboard_snapshot", side_effect=_fake_snapshot), \
+                 patch("universal_engine.utils.maa_installer.resolve_maa_path", return_value=Path(tmp)), \
+                 patch("universal_engine.utils.env_doctor.discover_adb_executable", return_value=None), \
                  patch.object(eng, "ensure_maa_ready", return_value={"ok": True, "maa_path": str(tmp)}), \
                  patch.object(eng, "probe_or_launch_emulator", side_effect=_fake_probe), \
                  patch.object(eng, "run_reclamation", side_effect=_blocking_reclamation), \
