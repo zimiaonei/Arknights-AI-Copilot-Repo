@@ -1,0 +1,1494 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-palette="sky" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PRTS · MAA 自主控制台</title>
+  <link rel="stylesheet" href="styles/tokens.css">
+  <link rel="stylesheet" href="styles/app.css">
+</head>
+<body>
+  <!-- Inline SVG Symbols (Offline Material Symbols, 24x24 viewBox, stroke=currentColor, fill=none) -->
+  <svg style="display:none;">
+    <defs>
+      <symbol id="icon-prts" viewBox="0 0 24 24">
+        <polygon points="12 2 21 7 21 17 12 22 3 17 3 7" stroke="currentColor" stroke-width="1.75" fill="none"/>
+        <line x1="12" y1="2" x2="12" y2="22" stroke="currentColor" stroke-width="1.75"/>
+        <line x1="3" y1="7" x2="21" y2="17" stroke="currentColor" stroke-width="1.75"/>
+        <line x1="3" y1="17" x2="21" y2="7" stroke="currentColor" stroke-width="1.75"/>
+      </symbol>
+      <symbol id="icon-dashboard" viewBox="0 0 24 24">
+        <rect x="3" y="3" width="7" height="9" rx="1.5" stroke="currentColor" stroke-width="1.75" fill="none"/>
+        <rect x="14" y="3" width="7" height="5" rx="1.5" stroke="currentColor" stroke-width="1.75" fill="none"/>
+        <rect x="14" y="12" width="7" height="9" rx="1.5" stroke="currentColor" stroke-width="1.75" fill="none"/>
+        <rect x="3" y="16" width="7" height="5" rx="1.5" stroke="currentColor" stroke-width="1.75" fill="none"/>
+      </symbol>
+      <symbol id="icon-sword" viewBox="0 0 24 24">
+        <polyline points="14.5 17.5 3 6 6 3 17.5 14.5" stroke="currentColor" stroke-width="1.75" fill="none"/>
+        <line x1="13" y1="19" x2="19" y2="13" stroke="currentColor" stroke-width="1.75"/>
+        <line x1="16" y1="16" x2="20" y2="20" stroke="currentColor" stroke-width="1.75"/>
+        <line x1="19" y1="21" x2="21" y2="19" stroke="currentColor" stroke-width="1.75"/>
+      </symbol>
+      <symbol id="icon-compass" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.75" fill="none"/>
+        <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88" stroke="currentColor" stroke-width="1.75" fill="none"/>
+      </symbol>
+      <symbol id="icon-terminal" viewBox="0 0 24 24">
+        <rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" stroke-width="1.75" fill="none"/>
+        <polyline points="6 9 10 12 6 15" stroke="currentColor" stroke-width="1.75" fill="none"/>
+        <line x1="12" y1="15" x2="17" y2="15" stroke="currentColor" stroke-width="1.75"/>
+      </symbol>
+      <symbol id="icon-agent" viewBox="0 0 24 24">
+        <rect x="4" y="8" width="16" height="12" rx="2" stroke="currentColor" stroke-width="1.75" fill="none"/>
+        <line x1="12" y1="4" x2="12" y2="8" stroke="currentColor" stroke-width="1.75"/>
+        <circle cx="12" cy="3" r="1" stroke="currentColor" stroke-width="1.75" fill="currentColor"/>
+        <circle cx="9" cy="13" r="1.5" stroke="currentColor" stroke-width="1.75" fill="none"/>
+        <circle cx="15" cy="13" r="1.5" stroke="currentColor" stroke-width="1.75" fill="none"/>
+        <line x1="8" y1="17" x2="16" y2="17" stroke="currentColor" stroke-width="1.75"/>
+      </symbol>
+      <symbol id="icon-settings" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.75" fill="none"/>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" stroke="currentColor" stroke-width="1.75" fill="none"/>
+      </symbol>
+      <symbol id="icon-check" viewBox="0 0 24 24">
+        <polyline points="20 6 9 17 4 12" stroke="currentColor" stroke-width="2" fill="none"/>
+      </symbol>
+      <symbol id="icon-minus" viewBox="0 0 24 24">
+        <line x1="6" y1="12" x2="18" y2="12" stroke="currentColor" stroke-width="2.5"/>
+      </symbol>
+      <symbol id="icon-close" viewBox="0 0 24 24">
+        <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="1.75"/>
+        <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="1.75"/>
+      </symbol>
+      <symbol id="icon-alert" viewBox="0 0 24 24">
+        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" stroke="currentColor" stroke-width="1.75" fill="none"/>
+        <line x1="12" y1="9" x2="12" y2="13" stroke="currentColor" stroke-width="1.75"/>
+        <circle cx="12" cy="17" r="1" stroke="currentColor" stroke-width="1.75" fill="currentColor"/>
+      </symbol>
+      <symbol id="icon-refresh" viewBox="0 0 24 24">
+        <polyline points="23 4 23 10 17 10" stroke="currentColor" stroke-width="1.75" fill="none"/>
+        <polyline points="1 20 1 14 7 14" stroke="currentColor" stroke-width="1.75" fill="none"/>
+        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" stroke="currentColor" stroke-width="1.75" fill="none"/>
+      </symbol>
+      <symbol id="icon-download" viewBox="0 0 24 24">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" stroke="currentColor" stroke-width="1.75" fill="none"/>
+        <polyline points="7 10 12 15 17 10" stroke="currentColor" stroke-width="1.75" fill="none"/>
+        <line x1="12" y1="15" x2="12" y2="3" stroke="currentColor" stroke-width="1.75"/>
+      </symbol>
+      <symbol id="icon-folder" viewBox="0 0 24 24">
+        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" stroke="currentColor" stroke-width="1.75" fill="none"/>
+      </symbol>
+      <symbol id="icon-play" viewBox="0 0 24 24">
+        <polygon points="5 3 19 12 5 21" stroke="currentColor" stroke-width="1.75" fill="currentColor"/>
+      </symbol>
+      <symbol id="icon-stop" viewBox="0 0 24 24">
+        <rect x="4" y="4" width="16" height="16" rx="2" stroke="currentColor" stroke-width="1.75" fill="currentColor"/>
+      </symbol>
+      <symbol id="icon-copy" viewBox="0 0 24 24">
+        <rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="1.75" fill="none"/>
+        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="1.75" fill="none"/>
+      </symbol>
+      <symbol id="icon-chevron-down" viewBox="0 0 24 24">
+        <polyline points="6 9 12 15 18 9" stroke="currentColor" stroke-width="1.75" fill="none"/>
+      </symbol>
+      <symbol id="icon-chevron-up" viewBox="0 0 24 24">
+        <polyline points="18 15 12 9 6 15" stroke="currentColor" stroke-width="1.75" fill="none"/>
+      </symbol>
+      <symbol id="icon-search" viewBox="0 0 24 24">
+        <circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="1.75" fill="none"/>
+        <line x1="21" y1="21" x2="16.65" y2="16.65" stroke="currentColor" stroke-width="1.75"/>
+      </symbol>
+      <symbol id="icon-trash" viewBox="0 0 24 24">
+        <polyline points="3 6 5 6 21 6" stroke="currentColor" stroke-width="1.75" fill="none"/>
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" stroke="currentColor" stroke-width="1.75" fill="none"/>
+      </symbol>
+      <symbol id="icon-external" viewBox="0 0 24 24">
+        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" stroke="currentColor" stroke-width="1.75" fill="none"/>
+        <polyline points="15 3 21 3 21 9" stroke="currentColor" stroke-width="1.75" fill="none"/>
+        <line x1="10" y1="14" x2="21" y2="3" stroke="currentColor" stroke-width="1.75"/>
+      </symbol>
+      <symbol id="icon-chip" viewBox="0 0 24 24">
+        <rect x="4" y="4" width="16" height="16" rx="2" stroke="currentColor" stroke-width="1.75" fill="none"/>
+        <rect x="9" y="9" width="6" height="6" stroke="currentColor" stroke-width="1.75" fill="none"/>
+        <line x1="9" y1="1" x2="9" y2="4" stroke="currentColor" stroke-width="1.75"/>
+        <line x1="15" y1="1" x2="15" y2="4" stroke="currentColor" stroke-width="1.75"/>
+        <line x1="9" y1="20" x2="9" y2="23" stroke="currentColor" stroke-width="1.75"/>
+        <line x1="15" y1="20" x2="15" y2="23" stroke="currentColor" stroke-width="1.75"/>
+        <line x1="20" y1="9" x2="23" y2="9" stroke="currentColor" stroke-width="1.75"/>
+        <line x1="20" y1="15" x2="23" y2="15" stroke="currentColor" stroke-width="1.75"/>
+        <line x1="1" y1="9" x2="4" y2="9" stroke="currentColor" stroke-width="1.75"/>
+        <line x1="1" y1="15" x2="4" y2="15" stroke="currentColor" stroke-width="1.75"/>
+      </symbol>
+      <symbol id="icon-tent" viewBox="0 0 24 24">
+        <polygon points="12 2 2 20 22 20" stroke="currentColor" stroke-width="1.75" fill="none"/>
+        <polygon points="12 2 12 20 7 20" stroke="currentColor" stroke-width="1.75" fill="none"/>
+      </symbol>
+      <symbol id="icon-sun" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.75" fill="none"/>
+        <line x1="12" y1="2" x2="12" y2="4.5" stroke="currentColor" stroke-width="1.75"/>
+        <line x1="12" y1="19.5" x2="12" y2="22" stroke="currentColor" stroke-width="1.75"/>
+        <line x1="4.93" y1="4.93" x2="6.7" y2="6.7" stroke="currentColor" stroke-width="1.75"/>
+        <line x1="17.3" y1="17.3" x2="19.07" y2="19.07" stroke="currentColor" stroke-width="1.75"/>
+        <line x1="2" y1="12" x2="4.5" y2="12" stroke="currentColor" stroke-width="1.75"/>
+        <line x1="19.5" y1="12" x2="22" y2="12" stroke="currentColor" stroke-width="1.75"/>
+        <line x1="4.93" y1="19.07" x2="6.7" y2="17.3" stroke="currentColor" stroke-width="1.75"/>
+        <line x1="17.3" y1="6.7" x2="19.07" y2="4.93" stroke="currentColor" stroke-width="1.75"/>
+      </symbol>
+      <symbol id="icon-moon" viewBox="0 0 24 24">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" stroke="currentColor" stroke-width="1.75" fill="none"/>
+      </symbol>
+      <symbol id="icon-palette" viewBox="0 0 24 24">
+        <path d="M12 2a10 10 0 0 0 0 20 2 2 0 0 0 2-2v-.5a1.5 1.5 0 0 1 1.5-1.5H17a5 5 0 0 0 5-5 10 10 0 0 0-10-10z" stroke="currentColor" stroke-width="1.75" fill="none"/>
+        <circle cx="7.5" cy="11.5" r="1.2" fill="currentColor" stroke="none"/>
+        <circle cx="10.5" cy="7.5" r="1.2" fill="currentColor" stroke="none"/>
+        <circle cx="14.5" cy="7.5" r="1.2" fill="currentColor" stroke="none"/>
+        <circle cx="16.5" cy="11.5" r="1.2" fill="currentColor" stroke="none"/>
+      </symbol>
+    </defs>
+  </svg>
+
+  <div class="app-shell">
+    <!-- Single-Row Top Bar (56px) -->
+    <header class="top-bar">
+      <div class="top-bar-left">
+        <div class="brand-badge">
+          <span class="brand-icon-wrap">
+            <svg class="icon"><use href="#icon-prts"/></svg>
+          </span>
+          <span>PRTS · MAA</span>
+        </div>
+        <div class="status-pill-group">
+          <!-- MAA Status Pill -->
+          <div class="status-pill" id="top-pill-maa">
+            <span class="status-dot neutral" id="dot-maa"></span>
+            <span id="text-maa-ver">MAA 检测中...</span>
+            <span class="pill-action" id="btn-check-update">检查更新</span>
+          </div>
+          <!-- ADB Status Pill -->
+          <div class="status-pill" id="top-pill-adb">
+            <span class="status-dot neutral" id="dot-adb"></span>
+            <span id="text-adb-status">ADB 未连接</span>
+            <span class="pill-action" id="btn-probe-adb">探测/拉起</span>
+          </div>
+          <!-- AI Mode Tonal Pill -->
+          <div class="status-pill" id="top-pill-ai">
+            <span class="status-dot agent" id="dot-ai"></span>
+            <span id="text-ai-mode">桌面 Agent 协同</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="top-bar-right">
+        <!-- Running Task Status Indicator & Linear Progress -->
+        <div class="running-task-indicator idle" id="task-status-box">
+          <span class="status-dot success" id="dot-task"></span>
+          <span id="text-task-status">就绪</span>
+          <div class="linear-progress-bar hidden" id="task-progress-bar">
+            <div class="linear-progress-fill" id="task-progress-fill"></div>
+          </div>
+        </div>
+
+        <!-- Material You Theme Controls -->
+        <div class="theme-controls">
+          <button class="icon-btn" id="btn-palette-popover" title="主题色板" aria-label="主题色板">
+            <svg class="icon"><use href="#icon-palette"/></svg>
+          </button>
+          <button class="icon-btn" id="btn-theme-toggle" title="切换浅色/深色模式" aria-label="切换浅色/深色模式">
+            <svg class="icon" id="icon-theme-toggle"><use href="#icon-moon"/></svg>
+          </button>
+          <div class="palette-popover hidden" id="palette-popover">
+            <div class="palette-popover-title">Material You 配色与主题</div>
+            <div class="palette-swatches-row">
+              <button class="palette-swatch-btn active" data-palette="sky" type="button">
+                <span class="swatch-dot swatch-dot-sky"></span>
+                <span>晴空蓝</span>
+              </button>
+              <button class="palette-swatch-btn" data-palette="sage" type="button">
+                <span class="swatch-dot swatch-dot-sage"></span>
+                <span>鼠尾草</span>
+              </button>
+              <button class="palette-swatch-btn" data-palette="lavender" type="button">
+                <span class="swatch-dot swatch-dot-lavender"></span>
+                <span>浅暮紫</span>
+              </button>
+              <button class="palette-swatch-btn" data-palette="sand" type="button">
+                <span class="swatch-dot swatch-dot-sand"></span>
+                <span>暖沙棕</span>
+              </button>
+            </div>
+            <div class="theme-mode-row">
+              <button class="theme-mode-btn active" data-theme-mode="light" type="button">
+                <svg class="icon icon-sm"><use href="#icon-sun"/></svg>
+                <span>浅色</span>
+              </button>
+              <button class="theme-mode-btn" data-theme-mode="dark" type="button">
+                <svg class="icon icon-sm"><use href="#icon-moon"/></svg>
+                <span>深色</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Stop Task Button -->
+        <button class="btn-stop-task" id="btn-global-stop" disabled>
+          <svg class="icon icon-sm"><use href="#icon-stop"/></svg>
+          <span>停止任务</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Shell Body: Navigation Drawer + Rounded Main Content Sheet -->
+    <div class="app-body">
+      <!-- Left Material 3 Navigation Drawer (212px) -->
+      <nav class="nav-rail">
+        <ul class="nav-list">
+          <li class="nav-item active" data-page="page-overview">
+            <svg class="icon"><use href="#icon-dashboard"/></svg>
+            <span>总览与日常</span>
+          </li>
+          <li class="nav-item" data-page="page-growth">
+            <svg class="icon"><use href="#icon-sword"/></svg>
+            <span>推图与养成</span>
+          </li>
+          <li class="nav-item" data-page="page-exploration">
+            <svg class="icon"><use href="#icon-compass"/></svg>
+            <span>肉鸽与生息</span>
+          </li>
+          <li class="nav-item" data-page="page-terminal">
+            <svg class="icon"><use href="#icon-terminal"/></svg>
+            <span>实时终端</span>
+          </li>
+        </ul>
+
+        <div class="nav-rail-bottom">
+          <button class="nav-secondary-btn agent-btn" id="btn-open-agent-modal">
+            <svg class="icon"><use href="#icon-agent"/></svg>
+            <span>桌面 AI Agent</span>
+            <span class="status-dot agent" style="margin-left: auto;"></span>
+          </button>
+          <button class="nav-secondary-btn" id="btn-open-settings-modal">
+            <svg class="icon"><use href="#icon-settings"/></svg>
+            <span>全局设置</span>
+          </button>
+        </div>
+      </nav>
+
+      <!-- Main Content Sheet -->
+      <main class="main-content">
+        <!-- Global Conditional Banners -->
+        <div class="global-banners">
+          <!-- Agent Collab Banner -->
+          <div class="banner banner-agent hidden" id="banner-agent">
+            <div class="banner-info">
+              <svg class="icon"><use href="#icon-alert"/></svg>
+              <div>
+                <div class="banner-title" id="banner-agent-title">已生成 agent_task.json，等待 AI Agent 协同修轴</div>
+                <div class="banner-subtitle" id="banner-agent-sub">正在监听目标作业 JSON 文件改动，保存后自动恢复运行...</div>
+              </div>
+            </div>
+            <div class="banner-actions">
+              <button class="btn btn-primary btn-sm" id="banner-btn-copy-agent">
+                <svg class="icon icon-sm"><use href="#icon-copy"/></svg>
+                <span>复制协同指令</span>
+              </button>
+              <button class="btn btn-outlined btn-sm" id="banner-btn-open-task">
+                <svg class="icon icon-sm"><use href="#icon-folder"/></svg>
+                <span>打开任务文件</span>
+              </button>
+              <button class="btn btn-tonal btn-sm" id="banner-btn-resume-rules">
+                <svg class="icon icon-sm"><use href="#icon-play"/></svg>
+                <span>用规则继续</span>
+              </button>
+              <button class="btn btn-danger btn-sm" id="banner-btn-stop-agent">
+                <svg class="icon icon-sm"><use href="#icon-close"/></svg>
+                <span>停止</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Tutorial Handoff Banner -->
+          <div class="banner banner-tutorial hidden" id="banner-tutorial">
+            <div class="banner-info">
+              <svg class="icon"><use href="#icon-alert"/></svg>
+              <div>
+                <div class="banner-title" id="banner-tutorial-title">[教学关交接] 当前遇到无法跳过的教学关卡，请手动点通</div>
+                <div class="banner-subtitle" id="banner-tutorial-sub">后台自动轮询检测地图界面状态，通关返回地图后将自动继续...</div>
+              </div>
+            </div>
+            <div class="banner-actions">
+              <button class="btn btn-primary btn-sm" id="banner-btn-resume-tutorial">
+                <svg class="icon icon-sm"><use href="#icon-check"/></svg>
+                <span>我已通关，立即继续</span>
+              </button>
+              <button class="btn btn-danger btn-sm" id="banner-btn-stop-tutorial">
+                <svg class="icon icon-sm"><use href="#icon-close"/></svg>
+                <span>停止</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Pages Container -->
+        <div class="pages-viewport">
+          <!-- Page 1: 总览与日常 -->
+          <section class="page active" id="page-overview">
+            <!-- 3 Compact KPI Tiles -->
+            <div class="kpi-grid">
+              <div class="kpi-tile">
+                <div class="kpi-tile-label">
+                  <svg class="icon icon-sm"><use href="#icon-agent"/></svg>
+                  <span>干员 Box 档案</span>
+                </div>
+                <div class="kpi-tile-value" id="kpi-box-count">-- 名干员</div>
+                <div class="kpi-tile-sub" id="kpi-box-sub">精二干员: -- 名</div>
+              </div>
+              <div class="kpi-tile">
+                <div class="kpi-tile-label">
+                  <svg class="icon icon-sm"><use href="#icon-sword"/></svg>
+                  <span>剿灭周进度</span>
+                </div>
+                <div class="kpi-tile-value" id="kpi-anni-progress">-- / 1800</div>
+                <div class="kpi-tile-sub" id="kpi-anni-label">检测中...</div>
+              </div>
+              <div class="kpi-tile">
+                <div class="kpi-tile-label">
+                  <svg class="icon icon-sm"><use href="#icon-chip"/></svg>
+                  <span>智能养成推荐关</span>
+                </div>
+                <div class="kpi-tile-value" id="kpi-growth-stage">--</div>
+                <div class="kpi-tile-sub" id="kpi-growth-reason">暂无推荐</div>
+              </div>
+            </div>
+
+            <!-- 2 Spacious Action Cards -->
+            <div class="spacious-grid">
+              <!-- 一键日常收菜 Card -->
+              <div class="m3-card card-highlight">
+                <div class="card-header">
+                  <div class="card-title-group">
+                    <span class="card-icon-badge">
+                      <svg class="icon"><use href="#icon-play"/></svg>
+                    </span>
+                    <span class="card-title">一键日常收菜</span>
+                  </div>
+                  <span class="card-badge">全流程托管</span>
+                </div>
+                <div class="card-desc">
+                  自动执行：唤醒模拟器、公招高资保留锁定、基建干员换班、信用商店购物、当期剿灭、按理智刷关与每日全任务领奖。
+                </div>
+                <div class="card-footer">
+                  <button class="btn btn-primary btn-lg" id="btn-start-daily" style="flex: 1;">
+                    <svg class="icon"><use href="#icon-play"/></svg>
+                    <span>一键日常收菜</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- 当期剿灭托管 Card -->
+              <div class="m3-card">
+                <div class="card-header">
+                  <div class="card-title-group">
+                    <span class="card-icon-badge badge-secondary">
+                      <svg class="icon"><use href="#icon-sword"/></svg>
+                    </span>
+                    <span class="card-title">当期剿灭托管</span>
+                  </div>
+                  <span class="card-badge" id="badge-anni-status">1800 合成玉</span>
+                </div>
+                <div class="card-desc">
+                  自动前往当期剿灭作战关卡，使用剿灭作战切结书或常规代理指挥刷满本周 1800 合成玉配额。
+                </div>
+                <div class="card-footer">
+                  <button class="btn btn-tonal btn-lg" id="btn-start-annihilation" style="flex: 1;">
+                    <svg class="icon"><use href="#icon-play"/></svg>
+                    <span>开始剿灭托管</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Bottom Quick Preference Bar -->
+            <div class="quick-pref-bar">
+              <div class="pref-group">
+                <div class="pref-item">
+                  <span>游戏区服：</span>
+                  <div class="segmented-control" id="seg-server">
+                    <button class="segmented-btn active" data-value="Official">
+                      <svg class="icon icon-sm seg-check"><use href="#icon-check"/></svg>
+                      <span>官服</span>
+                    </button>
+                    <button class="segmented-btn" data-value="Bilibili">
+                      <svg class="icon icon-sm seg-check"><use href="#icon-check"/></svg>
+                      <span>B服</span>
+                    </button>
+                  </div>
+                </div>
+                <div class="pref-item">
+                  <span>完成后动作：</span>
+                  <div class="segmented-control" id="seg-post-action">
+                    <button class="segmented-btn active" data-value="none">
+                      <svg class="icon icon-sm seg-check"><use href="#icon-check"/></svg>
+                      <span>无</span>
+                    </button>
+                    <button class="segmented-btn" data-value="close_emulator">
+                      <svg class="icon icon-sm seg-check"><use href="#icon-check"/></svg>
+                      <span>关闭模拟器</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div class="pref-item" id="pref-quick-summary" style="color: var(--md-sys-color-on-surface-variant); font-size: 11.5px;">
+                AUTO 模式 | 自动推通未解锁
+              </div>
+            </div>
+          </section>
+
+          <!-- Page 2: 推图与养成 -->
+          <section class="page" id="page-growth">
+            <!-- Full-Width 新活动 / 主线推图 Card -->
+            <div class="m3-card">
+              <div class="card-header">
+                <div class="card-title-group">
+                  <span class="card-icon-badge">
+                    <svg class="icon"><use href="#icon-sword"/></svg>
+                  </span>
+                  <span class="card-title">新活动 / 主线推图</span>
+                </div>
+                <span class="card-badge">作业自愈</span>
+              </div>
+              <div class="card-desc">
+                输入指定目标关卡，系统将自动检索 PRTS 作业并执行代理战斗；如遇未解锁关卡将自动连续推通前置关。
+              </div>
+              <div style="display: flex; gap: 10px; align-items: center;">
+                <input type="text" class="input-text" id="input-push-stage" placeholder="如 TL-9, 14-20（留空推当期活动）" style="flex: 1;">
+                <button class="btn btn-primary" id="btn-start-push">
+                  <svg class="icon"><use href="#icon-play"/></svg>
+                  <span>开始推图</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- 2 Cards Grid -->
+            <div class="spacious-grid">
+              <!-- 智能自主养成 Card -->
+              <div class="m3-card">
+                <div class="card-header">
+                  <div class="card-title-group">
+                    <span class="card-icon-badge badge-secondary">
+                      <svg class="icon"><use href="#icon-chip"/></svg>
+                    </span>
+                    <span class="card-title">智能自主养成</span>
+                  </div>
+                  <span class="card-badge">Box 驱动</span>
+                </div>
+                <div class="card-desc">
+                  根据目标干员清单、本地仓库库存与今日芯片日历，自主计算最优刷图路线并自动消耗理智刷取。
+                </div>
+                <div class="card-footer">
+                  <button class="btn btn-primary" id="btn-start-auto-growth" style="flex: 1;">
+                    <svg class="icon"><use href="#icon-play"/></svg>
+                    <span>开始自主养成</span>
+                  </button>
+                  <button class="btn btn-outlined" id="btn-preview-growth">
+                    <span>预览决策</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- 刷新干员与仓库档案 Card -->
+              <div class="m3-card">
+                <div class="card-header">
+                  <div class="card-title-group">
+                    <span class="card-icon-badge badge-secondary">
+                      <svg class="icon"><use href="#icon-refresh"/></svg>
+                    </span>
+                    <span class="card-title">刷新干员与仓库档案</span>
+                  </div>
+                  <span class="card-badge" id="badge-depot-time">未同步</span>
+                </div>
+                <div class="card-desc" id="depot-summary-desc">
+                  启动 MAA 识别我的干员 Box 与仓库物资明细，更新 my_box.json 与 depot_result.json。
+                </div>
+                <div class="card-footer">
+                  <button class="btn btn-tonal" id="btn-sync-box" style="flex: 1;">
+                    <svg class="icon"><use href="#icon-refresh"/></svg>
+                    <span>刷新干员与仓库</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Page 3: 肉鸽与生息 -->
+          <section class="page" id="page-exploration">
+            <!-- Full-Width 集成战略（肉鸽） Card -->
+            <div class="m3-card">
+              <div class="card-header">
+                <div class="card-title-group">
+                  <span class="card-icon-badge badge-rl">
+                    <svg class="icon"><use href="#icon-compass"/></svg>
+                  </span>
+                  <span class="card-title">集成战略（肉鸽）</span>
+                  <span class="card-badge" id="badge-rl-theme">沉沦者的黑流树海</span>
+                </div>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                  <span style="font-size: 12px; font-weight: 600;">策略模式：</span>
+                  <select class="input-select" id="select-rl-card-mode">
+                    <option value="纯 MAA 自动刷取">纯 MAA 自动刷取</option>
+                    <option value="AI 辅助策略通关">AI 辅助策略通关</option>
+                  </select>
+                </div>
+              </div>
+              <div class="card-desc" id="rl-structured-desc">
+                当前目标：黑流生态养成 (30001) | 局后自动领奖：开 | 局后科技树加点：开
+              </div>
+              <div class="card-footer">
+                <button class="btn btn-primary" id="btn-start-roguelike">
+                  <svg class="icon"><use href="#icon-play"/></svg>
+                  <span>开始探索</span>
+                </button>
+                <button class="btn btn-outlined" id="btn-rl-settlement">
+                  <svg class="icon"><use href="#icon-chip"/></svg>
+                  <span>一键领奖与加点</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Full-Width 生息演算 Card -->
+            <div class="m3-card">
+              <div class="card-header">
+                <div class="card-title-group">
+                  <span class="card-icon-badge badge-ra">
+                    <svg class="icon"><use href="#icon-tent"/></svg>
+                  </span>
+                  <span class="card-title">生息演算</span>
+                  <span class="card-badge" id="badge-ra-theme">重启锚点</span>
+                </div>
+                <span class="card-badge" id="badge-ra-mode">RA-1 精耕细作</span>
+              </div>
+              <div class="card-desc" id="ra-structured-desc">
+                模式：RA-1 关卡循环 · 精耕细作 | 自动搬空演算商店：开 | 配置来源：gui.new.json
+              </div>
+              <div class="card-footer">
+                <button class="btn btn-primary" id="btn-toggle-reclamation">
+                  <svg class="icon"><use href="#icon-play"/></svg>
+                  <span id="btn-toggle-ra-text">启动生息演算</span>
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <!-- Page 4: 实时终端 -->
+          <section class="page" id="page-terminal">
+            <div class="terminal-page">
+              <div class="terminal-header">
+                <div class="terminal-header-top">
+                  <div class="terminal-header-title-box">
+                    <span style="font-weight: 700; font-size: 13.5px; white-space: nowrap;">实时战报与决策日志</span>
+                    <span style="font-size: 11px; color: var(--md-sys-color-on-surface-muted); white-space: nowrap; flex-shrink: 0;" id="terminal-line-count">0 行</span>
+                  </div>
+                  <div class="terminal-header-tools">
+                    <input type="text" class="input-text terminal-search-box" id="terminal-search" placeholder="搜索日志...">
+                    <button class="btn btn-outlined btn-sm" id="btn-open-reports" style="white-space: nowrap; flex-shrink: 0;">
+                      <svg class="icon icon-sm"><use href="#icon-folder"/></svg>
+                      <span>打开战报目录</span>
+                    </button>
+                    <button class="btn btn-outlined btn-sm" id="btn-clear-terminal" style="white-space: nowrap; flex-shrink: 0;">
+                      <svg class="icon icon-sm"><use href="#icon-trash"/></svg>
+                      <span>清空日志</span>
+                    </button>
+                  </div>
+                </div>
+                <div class="terminal-chips" id="terminal-filter-chips">
+                  <!-- Filled dynamically from options.log_categories -->
+                </div>
+              </div>
+              <div class="terminal-body" id="terminal-body">
+                <!-- Log rows rendered here -->
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <!-- Collapsible Bottom Log Drawer on Non-Terminal Pages -->
+        <div class="bottom-log-drawer" id="bottom-log-drawer">
+          <div class="drawer-header" id="drawer-header-toggle">
+            <div class="drawer-latest-line" id="drawer-latest-text">
+              <span class="log-tag tag-normal">[系统]</span>
+              <span>控制台就绪。</span>
+            </div>
+            <div class="drawer-actions">
+              <button class="btn btn-tonal btn-sm" id="drawer-btn-jump-terminal" style="height: 24px; padding: 0 10px;">
+                <span>跳转终端</span>
+              </button>
+              <svg class="icon icon-sm" id="drawer-toggle-icon"><use href="#icon-chevron-up"/></svg>
+            </div>
+          </div>
+          <div class="drawer-content" id="drawer-content-preview">
+            <!-- 5-10 recent log lines preview -->
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- Modal 1: 全局设置 Modal (5 Tabs, 57 Fields, Grouped Settings Cards) -->
+  <div class="modal-overlay hidden" id="modal-settings">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title">
+          <svg class="icon"><use href="#icon-settings"/></svg>
+          <span>全局控制台设置</span>
+        </div>
+        <button class="modal-close-btn" data-close="modal-settings" aria-label="关闭设置">
+          <svg class="icon"><use href="#icon-close"/></svg>
+        </button>
+      </div>
+      <div class="modal-tabs" id="settings-tabs-bar" role="tablist">
+        <button class="modal-tab-btn active" data-tab="tab-set-fight" role="tab" aria-selected="true">刷理智与养成</button>
+        <button class="modal-tab-btn" data-tab="tab-set-recruit" role="tab" aria-selected="false">公招高资与日常</button>
+        <button class="modal-tab-btn" data-tab="tab-set-exploration" role="tab" aria-selected="false">肉鸽与生息演算</button>
+        <button class="modal-tab-btn" data-tab="tab-set-ai" role="tab" aria-selected="false">AI 协同与内核</button>
+        <button class="modal-tab-btn" data-tab="tab-set-webhook" role="tab" aria-selected="false">Webhook 通知</button>
+      </div>
+
+      <div class="modal-body">
+        <!-- Tab 1: 刷理智与养成 -->
+        <div class="settings-tab-pane active" id="tab-set-fight">
+          <div class="m3-settings-group">
+            <div class="m3-group-label">刷理智与推图参数</div>
+            <div class="m3-group-list">
+              <div class="m3-setting-item">
+                <div class="m3-setting-text">
+                  <div class="m3-setting-title">刷理智策略模式</div>
+                  <div class="m3-setting-desc">AUTO 自动规划养成刷图，MANUAL 刷上一次作战或指定固定关</div>
+                </div>
+                <div class="segmented-control" id="set-fight-mode">
+                  <button class="segmented-btn active" data-value="AUTO">
+                    <svg class="icon icon-sm seg-check"><use href="#icon-check"/></svg>
+                    <span>AUTO (智能养成)</span>
+                  </button>
+                  <button class="segmented-btn" data-value="MANUAL">
+                    <svg class="icon icon-sm seg-check"><use href="#icon-check"/></svg>
+                    <span>MANUAL (指定关)</span>
+                  </button>
+                </div>
+              </div>
+              <div class="m3-setting-item">
+                <div class="m3-setting-text">
+                  <div class="m3-setting-title">指定固定关卡</div>
+                  <div class="m3-setting-desc">留空走自动决策，如 1-7 或 14-20</div>
+                </div>
+                <div class="m3-setting-control m3-setting-control-wide">
+                  <input type="text" class="input-text" id="set-override-stage" placeholder="留空走自动决策，如 1-7 或 14-20">
+                </div>
+              </div>
+              <div class="m3-setting-item">
+                <div class="m3-setting-text">
+                  <div class="m3-setting-title">理智药使用上限</div>
+                  <div class="m3-setting-desc">单次日常允许消耗的理智药水数量</div>
+                </div>
+                <div class="m3-setting-control m3-setting-control-short">
+                  <input type="number" class="input-text" id="set-medicine" min="0" value="0">
+                </div>
+              </div>
+              <div class="m3-setting-item">
+                <div class="m3-setting-text">
+                  <div class="m3-setting-title">源石使用上限</div>
+                  <div class="m3-setting-desc">单次日常允许碎石恢复理智的上限</div>
+                </div>
+                <div class="m3-setting-control m3-setting-control-short">
+                  <input type="number" class="input-text" id="set-stone" min="0" value="0">
+                </div>
+              </div>
+              <div class="m3-setting-item">
+                <div class="m3-setting-text">
+                  <div class="m3-setting-title">推图最大自愈轮次</div>
+                  <div class="m3-setting-desc">单关翻车后允许替补与修轴的最大尝试轮次</div>
+                </div>
+                <div class="m3-setting-control m3-setting-control-short">
+                  <input type="number" class="input-text" id="set-max-push-rounds" min="1" value="5">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="m3-settings-group">
+            <div class="m3-group-label">自主养成偏好</div>
+            <div class="m3-group-list">
+              <div class="m3-setting-item">
+                <div class="m3-setting-text">
+                  <div class="m3-setting-title">定向养成干员</div>
+                  <div class="m3-setting-desc">多个干员以逗号分隔，优先满足其精二/专精材料需求</div>
+                </div>
+                <div class="m3-setting-control m3-setting-control-wide">
+                  <input type="text" class="input-text" id="set-target-ops" placeholder="逗号分隔，如：维什戴尔, 逻各斯, 玛恩纳">
+                </div>
+              </div>
+              <div class="m3-setting-item">
+                <div class="m3-setting-text">
+                  <div class="m3-setting-title">T3 材料安全库存</div>
+                  <div class="m3-setting-desc">当定向材料已满足时自动补齐低库存蓝材料</div>
+                </div>
+                <div class="m3-setting-control m3-setting-control-short">
+                  <input type="number" class="input-text" id="set-t3-stock" min="0" value="30">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="m3-settings-group">
+            <div class="m3-group-label">自动化调度开关</div>
+            <div class="m3-group-list">
+              <label class="m3-setting-item switch-label">
+                <span class="m3-setting-text">
+                  <span class="m3-setting-title">未解锁关卡自动抄作业推通（auto_push）</span>
+                  <span class="m3-setting-desc">刷图或活动遇阻时自动连续推通前置关</span>
+                </span>
+                <input type="checkbox" class="switch-input" id="set-sw-auto-push">
+                <span class="switch-track"><span class="switch-thumb"><svg class="switch-icon-on"><use href="#icon-check"/></svg><svg class="switch-icon-off"><use href="#icon-minus"/></svg></span></span>
+              </label>
+              <label class="m3-setting-item switch-label">
+                <span class="m3-setting-text">
+                  <span class="m3-setting-title">AUTO 模式优先刷当期 SideStory 活动材料关</span>
+                  <span class="m3-setting-desc">活动开启期间优先刷取高掉率活动关卡</span>
+                </span>
+                <input type="checkbox" class="switch-input" id="set-sw-prefer-event">
+                <span class="switch-track"><span class="switch-thumb"><svg class="switch-icon-on"><use href="#icon-check"/></svg><svg class="switch-icon-off"><use href="#icon-minus"/></svg></span></span>
+              </label>
+              <label class="m3-setting-item switch-label">
+                <span class="m3-setting-text">
+                  <span class="m3-setting-title">允许自动按今日开放日历补刷精二芯片本</span>
+                  <span class="m3-setting-desc">目标干员缺少芯片且当日开放时自动切换</span>
+                </span>
+                <input type="checkbox" class="switch-input" id="set-sw-allow-chip">
+                <span class="switch-track"><span class="switch-thumb"><svg class="switch-icon-on"><use href="#icon-check"/></svg><svg class="switch-icon-off"><use href="#icon-minus"/></svg></span></span>
+              </label>
+              <label class="m3-setting-item switch-label">
+                <span class="m3-setting-text">
+                  <span class="m3-setting-title">龙门币/作战记录不足时兜底刷资源本 (CE-6/LS-6)</span>
+                  <span class="m3-setting-desc">保障养成目标具备充足经验与龙门币</span>
+                </span>
+                <input type="checkbox" class="switch-input" id="set-sw-allow-res">
+                <span class="switch-track"><span class="switch-thumb"><svg class="switch-icon-on"><use href="#icon-check"/></svg><svg class="switch-icon-off"><use href="#icon-minus"/></svg></span></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 2: 公招高资与日常 -->
+        <div class="settings-tab-pane" id="tab-set-recruit">
+          <div class="m3-settings-group">
+            <div class="m3-group-label">高星词条保护</div>
+            <div class="m3-group-list">
+              <div class="m3-setting-item m3-setting-stack m3-setting-warn">
+                <div class="m3-setting-text">
+                  <div class="m3-setting-title">公招高星词条保护锁定</div>
+                  <div class="m3-setting-desc">发现命中词条后自动保留槽位并弹窗/推送提醒</div>
+                </div>
+                <div class="checkbox-group">
+                  <label class="checkbox-label"><input type="checkbox" id="set-cb-high-senior"> 锁定「高级资深干员」（6星必锁）</label>
+                  <label class="checkbox-label"><input type="checkbox" id="set-cb-senior"> 锁定「资深干员」（5星词条）</label>
+                  <label class="checkbox-label"><input type="checkbox" id="set-cb-robot"> 锁定「支援机械」（1星小车）</label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="m3-settings-group">
+            <div class="m3-group-label">招募次数与掉落汇报</div>
+            <div class="m3-group-list">
+              <div class="m3-setting-item">
+                <div class="m3-setting-text">
+                  <div class="m3-setting-title">单次日常公开招募次数</div>
+                  <div class="m3-setting-desc">建议设置为 4 次以覆盖日常任务</div>
+                </div>
+                <div class="m3-setting-control m3-setting-control-short">
+                  <input type="number" class="input-text" id="set-rec-times" min="1" max="9" value="4">
+                </div>
+              </div>
+              <div class="m3-setting-item">
+                <div class="m3-setting-text">
+                  <div class="m3-setting-title">企鹅物流 / 一图流 ID</div>
+                  <div class="m3-setting-desc">可选填，用于关联个人掉落汇报账号</div>
+                </div>
+                <div class="m3-setting-control m3-setting-control-wide">
+                  <input type="text" class="input-text" id="set-penguin-id" placeholder="可选填">
+                </div>
+              </div>
+              <label class="m3-setting-item switch-label">
+                <span class="m3-setting-text">
+                  <span class="m3-setting-title">自动汇报掉落至企鹅物流</span>
+                </span>
+                <input type="checkbox" class="switch-input" id="set-sw-penguin">
+                <span class="switch-track"><span class="switch-thumb"><svg class="switch-icon-on"><use href="#icon-check"/></svg><svg class="switch-icon-off"><use href="#icon-minus"/></svg></span></span>
+              </label>
+              <label class="m3-setting-item switch-label">
+                <span class="m3-setting-text">
+                  <span class="m3-setting-title">自动汇报至明日方舟一图流</span>
+                </span>
+                <input type="checkbox" class="switch-input" id="set-sw-yituliu">
+                <span class="switch-track"><span class="switch-thumb"><svg class="switch-icon-on"><use href="#icon-check"/></svg><svg class="switch-icon-off"><use href="#icon-minus"/></svg></span></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="m3-settings-group">
+            <div class="m3-group-label">日常收菜跳过任务（勾选则跳过）</div>
+            <div class="m3-group-list">
+              <div class="m3-setting-item m3-setting-stack">
+                <div class="checkbox-group" id="set-skip-tasks-group">
+                  <label class="checkbox-label"><input type="checkbox" value="startup"> 唤醒</label>
+                  <label class="checkbox-label"><input type="checkbox" value="recruit"> 公招</label>
+                  <label class="checkbox-label"><input type="checkbox" value="infrast"> 基建</label>
+                  <label class="checkbox-label"><input type="checkbox" value="mall"> 信用商店</label>
+                  <label class="checkbox-label"><input type="checkbox" value="annihilation"> 剿灭</label>
+                  <label class="checkbox-label"><input type="checkbox" value="fight"> 刷理智</label>
+                  <label class="checkbox-label"><input type="checkbox" value="award"> 领奖</label>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 3: 肉鸽与生息演算 -->
+        <div class="settings-tab-pane" id="tab-set-exploration">
+          <div class="m3-settings-group">
+            <div class="m3-group-label">原版 MAA 配置继承</div>
+            <div class="m3-group-list">
+              <div class="m3-setting-item">
+                <label class="switch-label" style="flex: 1;">
+                  <input type="checkbox" class="switch-input" id="set-sw-use-gui-cfg">
+                  <span class="switch-track"><span class="switch-thumb"><svg class="switch-icon-on"><use href="#icon-check"/></svg><svg class="switch-icon-off"><use href="#icon-minus"/></svg></span></span>
+                  <span class="m3-setting-text">
+                    <span class="m3-setting-title">继承原版 MAA gui.new.json 配置</span>
+                    <span class="m3-setting-desc">未显式覆盖的字段默认跟随原版配置</span>
+                  </span>
+                </label>
+                <button class="btn btn-tonal btn-sm" id="btn-sync-gui-config">
+                  <svg class="icon icon-sm"><use href="#icon-refresh"/></svg>
+                  <span>一键同步原版 MAA 配置</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="m3-settings-group">
+            <div class="m3-group-label">集成战略（肉鸽）配置</div>
+            <div class="m3-group-list">
+              <div class="m3-setting-item">
+                <div class="m3-setting-text"><div class="m3-setting-title">肉鸽主题</div></div>
+                <div class="m3-setting-control m3-setting-control-wide">
+                  <select class="input-select" id="set-rl-theme" style="width: 100%;"></select>
+                </div>
+              </div>
+              <div class="m3-setting-item">
+                <div class="m3-setting-text"><div class="m3-setting-title">刷取目标</div></div>
+                <div class="m3-setting-control m3-setting-control-wide">
+                  <select class="input-select" id="set-rl-mode" style="width: 100%;"></select>
+                </div>
+              </div>
+              <div class="m3-setting-item">
+                <div class="m3-setting-text"><div class="m3-setting-title">开局分队</div></div>
+                <div class="m3-setting-control m3-setting-control-wide">
+                  <input type="text" class="input-text" id="set-rl-squad" placeholder="留空继承原版 MAA（如 指挥分队）">
+                </div>
+              </div>
+              <div class="m3-setting-item">
+                <div class="m3-setting-text"><div class="m3-setting-title">职业组</div></div>
+                <div class="m3-setting-control m3-setting-control-wide">
+                  <input type="text" class="input-text" id="set-rl-roles" placeholder="留空继承原版 MAA（如 取长补短）">
+                </div>
+              </div>
+              <div class="m3-setting-item">
+                <div class="m3-setting-text"><div class="m3-setting-title">核心干员</div></div>
+                <div class="m3-setting-control m3-setting-control-wide">
+                  <input type="text" class="input-text" id="set-rl-core-char" placeholder="如 维什戴尔（留空自动）">
+                </div>
+              </div>
+              <div class="m3-setting-item">
+                <div class="m3-setting-text"><div class="m3-setting-title">探索次数上限</div></div>
+                <div class="m3-setting-control m3-setting-control-short">
+                  <input type="text" class="input-text" id="set-rl-starts" placeholder="留空继承">
+                </div>
+              </div>
+              <label class="m3-setting-item switch-label">
+                <span class="m3-setting-text">
+                  <span class="m3-setting-title">默认启用「AI 辅助策略通关」</span>
+                  <span class="m3-setting-desc">选人、选路、事件与 Boss 战前由 PRTS 接管</span>
+                </span>
+                <input type="checkbox" class="switch-input" id="set-sw-rl-ai">
+                <span class="switch-track"><span class="switch-thumb"><svg class="switch-icon-on"><use href="#icon-check"/></svg><svg class="switch-icon-off"><use href="#icon-minus"/></svg></span></span>
+              </label>
+              <div class="m3-setting-item">
+                <label class="switch-label" style="flex: 1;">
+                  <input type="checkbox" class="switch-input" id="set-sw-rl-timeout-fallback">
+                  <span class="switch-track"><span class="switch-thumb"><svg class="switch-icon-on"><use href="#icon-check"/></svg><svg class="switch-icon-off"><use href="#icon-minus"/></svg></span></span>
+                  <span class="m3-setting-text">
+                    <span class="m3-setting-title">AI 决策超时自动本地规则兜底</span>
+                  </span>
+                </label>
+                <div class="m3-setting-control">
+                  <span style="font-size: 12px; color: var(--md-sys-color-on-surface-variant);">超时(秒)</span>
+                  <input type="number" class="input-text" id="set-rl-timeout" style="width: 78px;" value="45">
+                </div>
+              </div>
+              <label class="m3-setting-item switch-label">
+                <span class="m3-setting-text"><span class="m3-setting-title">Boss 战前优先尝试 PRTS 作业适配</span></span>
+                <input type="checkbox" class="switch-input" id="set-sw-rl-boss-prts">
+                <span class="switch-track"><span class="switch-thumb"><svg class="switch-icon-on"><use href="#icon-check"/></svg><svg class="switch-icon-off"><use href="#icon-minus"/></svg></span></span>
+              </label>
+              <label class="m3-setting-item switch-label">
+                <span class="m3-setting-text"><span class="m3-setting-title">局后自动领奖</span></span>
+                <input type="checkbox" class="switch-input" id="set-sw-rl-claim">
+                <span class="switch-track"><span class="switch-thumb"><svg class="switch-icon-on"><use href="#icon-check"/></svg><svg class="switch-icon-off"><use href="#icon-minus"/></svg></span></span>
+              </label>
+              <label class="m3-setting-item switch-label">
+                <span class="m3-setting-text"><span class="m3-setting-title">局后自动科技树加点</span></span>
+                <input type="checkbox" class="switch-input" id="set-sw-rl-tech">
+                <span class="switch-track"><span class="switch-thumb"><svg class="switch-icon-on"><use href="#icon-check"/></svg><svg class="switch-icon-off"><use href="#icon-minus"/></svg></span></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="m3-settings-group">
+            <div class="m3-group-label">生息演算配置</div>
+            <div class="m3-group-list">
+              <div class="m3-setting-item">
+                <div class="m3-setting-text"><div class="m3-setting-title">演算主题</div></div>
+                <div class="m3-setting-control m3-setting-control-wide">
+                  <select class="input-select" id="set-ra-theme" style="width: 100%;"></select>
+                </div>
+              </div>
+              <div class="m3-setting-item">
+                <div class="m3-setting-text"><div class="m3-setting-title">刷取目标</div></div>
+                <div class="m3-setting-control m3-setting-control-wide">
+                  <select class="input-select" id="set-ra-mode" style="width: 100%;"></select>
+                </div>
+              </div>
+              <div class="m3-setting-item">
+                <div class="m3-setting-text">
+                  <div class="m3-setting-title">造物清单</div>
+                  <div class="m3-setting-desc">沙洲遗闻有效，逗号分隔</div>
+                </div>
+                <div class="m3-setting-control m3-setting-control-wide">
+                  <input type="text" class="input-text" id="set-ra-tools" placeholder="如：荧光棒, 便携式种植槽">
+                </div>
+              </div>
+              <label class="m3-setting-item switch-label">
+                <span class="m3-setting-text"><span class="m3-setting-title">自动搬空演算商店</span></span>
+                <input type="checkbox" class="switch-input" id="set-sw-ra-clear-store">
+                <span class="switch-track"><span class="switch-thumb"><svg class="switch-icon-on"><use href="#icon-check"/></svg><svg class="switch-icon-off"><use href="#icon-minus"/></svg></span></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 4: AI 协同与内核 -->
+        <div class="settings-tab-pane" id="tab-set-ai">
+          <div class="m3-settings-group">
+            <div class="m3-group-label">AI 协同方式</div>
+            <div class="m3-group-list">
+              <div class="m3-setting-item m3-setting-stack m3-setting-accent">
+                <div class="m3-setting-title">AI 协同模式切换</div>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                  <label class="checkbox-label">
+                    <input type="radio" name="set-ai-mode" value="agent_collab" checked>
+                    <span style="font-weight: 600;">直连桌面 AI Agent（免 API Key，遇阻自动写入 agent_task.json 并监听文件变化）</span>
+                  </label>
+                  <label class="checkbox-label">
+                    <input type="radio" name="set-ai-mode" value="builtin_api">
+                    <span style="font-weight: 600;">内置 OpenAI 兼容 API（后台静默自动调用，兼容 Gemini / DeepSeek / Ollama）</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="m3-settings-group">
+            <div class="m3-group-label">内置 API 连接参数</div>
+            <div class="m3-group-list">
+              <div class="m3-setting-item">
+                <div class="m3-setting-text"><div class="m3-setting-title">Base URL</div></div>
+                <div class="m3-setting-control m3-setting-control-wide">
+                  <input type="text" class="input-text" id="set-base-url" placeholder="api.openai.com/v1">
+                </div>
+              </div>
+              <div class="m3-setting-item">
+                <div class="m3-setting-text"><div class="m3-setting-title">API Key</div></div>
+                <div class="m3-setting-control m3-setting-control-wide">
+                  <input type="password" class="input-text" id="set-api-key" placeholder="本地 Ollama 可填 ollama">
+                </div>
+              </div>
+              <div class="m3-setting-item">
+                <div class="m3-setting-text"><div class="m3-setting-title">Model Name</div></div>
+                <div class="m3-setting-control m3-setting-control-wide">
+                  <input type="text" class="input-text" id="set-model-name" placeholder="gpt-4o-mini">
+                </div>
+              </div>
+              <div class="m3-setting-item">
+                <div class="m3-setting-text"><div class="m3-setting-title">API 超时（秒）</div></div>
+                <div class="m3-setting-control m3-setting-control-short">
+                  <input type="number" class="input-text" id="set-timeout-sec" min="5" value="30">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="m3-settings-group">
+            <div class="m3-group-label">MAA 内核与模拟器</div>
+            <div class="m3-group-list">
+              <div class="m3-setting-item">
+                <div class="m3-setting-text">
+                  <div class="m3-setting-title">MAA 内核目录</div>
+                  <div class="m3-setting-desc">包含 MaaCore.dll 的根目录</div>
+                </div>
+                <div class="m3-setting-control m3-setting-control-wide">
+                  <input type="text" class="input-text" id="set-maa-path" placeholder="包含 MaaCore.dll 的目录" style="flex: 1;">
+                  <button class="btn btn-outlined btn-sm" id="btn-browse-maa-settings">浏览...</button>
+                </div>
+              </div>
+              <div class="m3-setting-item">
+                <div class="m3-setting-text"><div class="m3-setting-title">模拟器 ADB 地址</div></div>
+                <div class="m3-setting-control m3-setting-control-wide">
+                  <input type="text" class="input-text" id="set-adb-address" placeholder="默认 127.0.0.1:16384">
+                </div>
+              </div>
+              <div class="m3-setting-item">
+                <div class="m3-setting-text">
+                  <div class="m3-setting-title">首次安装新手引导向导</div>
+                  <div class="m3-setting-desc">重新检测 MAA 内核、ADB 与 16:9 环境</div>
+                </div>
+                <button class="btn btn-tonal btn-sm" id="btn-reopen-wizard-from-settings">
+                  <svg class="icon icon-sm"><use href="#icon-compass"/></svg>
+                  <span>打开新手向导</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="m3-settings-group">
+            <div class="m3-group-label">外观与 Material You 主题</div>
+            <div class="m3-group-list">
+              <div class="m3-setting-item">
+                <div class="m3-setting-text">
+                  <div class="m3-setting-title">种子色板（Dynamic Tonal）</div>
+                  <div class="m3-setting-desc">即时切换整套控制台表面色阶与容器色调</div>
+                </div>
+                <div class="palette-swatches-inline">
+                  <button class="palette-swatch-btn active" data-palette="sky" type="button">
+                    <span class="swatch-dot swatch-dot-sky"></span>
+                    <span>晴空蓝</span>
+                  </button>
+                  <button class="palette-swatch-btn" data-palette="sage" type="button">
+                    <span class="swatch-dot swatch-dot-sage"></span>
+                    <span>鼠尾草绿</span>
+                  </button>
+                  <button class="palette-swatch-btn" data-palette="lavender" type="button">
+                    <span class="swatch-dot swatch-dot-lavender"></span>
+                    <span>浅暮紫</span>
+                  </button>
+                  <button class="palette-swatch-btn" data-palette="sand" type="button">
+                    <span class="swatch-dot swatch-dot-sand"></span>
+                    <span>暖沙棕</span>
+                  </button>
+                </div>
+              </div>
+              <div class="m3-setting-item">
+                <div class="m3-setting-text">
+                  <div class="m3-setting-title">明暗模式</div>
+                  <div class="m3-setting-desc">切换浅色或深色 M3 Tonal 表面</div>
+                </div>
+                <div class="m3-setting-control">
+                  <button class="theme-mode-btn active" data-theme-mode="light" type="button" style="width: 78px;">
+                    <svg class="icon icon-sm"><use href="#icon-sun"/></svg>
+                    <span>浅色</span>
+                  </button>
+                  <button class="theme-mode-btn" data-theme-mode="dark" type="button" style="width: 78px;">
+                    <svg class="icon icon-sm"><use href="#icon-moon"/></svg>
+                    <span>深色</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 5: Webhook 通知 -->
+        <div class="settings-tab-pane" id="tab-set-webhook">
+          <div class="m3-settings-group">
+            <div class="m3-group-label">推送通道</div>
+            <div class="m3-group-list">
+              <label class="m3-setting-item switch-label">
+                <span class="m3-setting-text">
+                  <span class="m3-setting-title">启用 Webhook 消息推送</span>
+                  <span class="m3-setting-desc">支持飞书 / 钉钉 / Discord / 通用 JSON POST</span>
+                </span>
+                <input type="checkbox" class="switch-input" id="set-sw-webhook">
+                <span class="switch-track"><span class="switch-thumb"><svg class="switch-icon-on"><use href="#icon-check"/></svg><svg class="switch-icon-off"><use href="#icon-minus"/></svg></span></span>
+              </label>
+              <div class="m3-setting-item">
+                <div class="m3-setting-text"><div class="m3-setting-title">Webhook URL</div></div>
+                <div class="m3-setting-control m3-setting-control-wide">
+                  <input type="text" class="input-text" id="set-webhook-url" placeholder="open.feishu.cn/open-apis/bot/v2/hook/...">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="m3-settings-group">
+            <div class="m3-group-label">通知触发条件</div>
+            <div class="m3-group-list">
+              <div class="m3-setting-item m3-setting-stack">
+                <label class="checkbox-label"><input type="checkbox" id="set-cb-wh-daily"> 每日日常收菜完成时推送战报摘要</label>
+                <label class="checkbox-label"><input type="checkbox" id="set-cb-wh-recruit"> 公招发现高资/资深干员词条时立即推送提醒</label>
+                <label class="checkbox-label"><input type="checkbox" id="set-cb-wh-agent"> 生成 agent_task.json 等待 AI Agent 修轴时推送提醒</label>
+              </div>
+            </div>
+          </div>
+
+          <div class="m3-settings-group">
+            <div class="m3-group-label">连通性测试</div>
+            <div class="m3-group-list">
+              <div class="m3-setting-item">
+                <div class="m3-setting-text">
+                  <div class="m3-setting-title">验证推送地址</div>
+                  <div class="m3-setting-desc">向当前填写的 Webhook URL 发送一条测试通知</div>
+                </div>
+                <button class="btn btn-tonal" id="btn-test-webhook-send">
+                  <svg class="icon icon-sm"><use href="#icon-external"/></svg>
+                  <span id="btn-test-webhook-label">发送测试 Webhook 通知</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-text" data-close="modal-settings">取消</button>
+        <button class="btn btn-primary" id="btn-save-settings">保存设置</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 2: 接入桌面 AI Agent Modal (2 Tabs) -->
+  <div class="modal-overlay hidden" id="modal-agent">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title">
+          <svg class="icon"><use href="#icon-agent"/></svg>
+          <span>接入桌面 AI Agent（免 API Key 直连协同指南）</span>
+        </div>
+        <button class="modal-close-btn" data-close="modal-agent" aria-label="关闭">
+          <svg class="icon"><use href="#icon-close"/></svg>
+        </button>
+      </div>
+      <div class="modal-tabs" id="agent-tabs-bar">
+        <button class="modal-tab-btn active" data-tab="tab-agent-prompts">三步接入 &amp; 一键复制提示词</button>
+        <button class="modal-tab-btn" data-tab="tab-agent-readme">查看完整 README 指南</button>
+      </div>
+
+      <div class="modal-body">
+        <!-- Tab 1: Prompts -->
+        <div class="agent-tab-pane active" id="tab-agent-prompts">
+          <div class="m3-card card-agent-tinted">
+            <div style="font-weight: 700; font-size: 13.5px;">三步免 API Key 协同工作流</div>
+            <div style="font-size: 12px; line-height: 1.65;">
+              1. 在 Antigravity / Claude Code / Cursor 中打开当前 MAA 工具根文件夹<br>
+              2. 复制下方「提示词一：初始化接管」发给你的 Agent，让它熟悉调度与干员库<br>
+              3. 推图遇到阻碍时，本软件会自动生成 agent_task.json 并监听改动，复制「提示词二」发给 Agent 即可自动修复！
+            </div>
+          </div>
+
+          <div class="m3-card" style="background: var(--md-sys-color-surface-container-lowest);">
+            <div class="card-header">
+              <span class="card-title">提示词一：初次接入接管</span>
+              <button class="btn btn-primary btn-sm" id="btn-copy-prompt-init">
+                <svg class="icon icon-sm"><use href="#icon-copy"/></svg>
+                <span>复制提示词一</span>
+              </button>
+            </div>
+            <textarea class="input-text" id="text-prompt-init" rows="4" readonly style="font-family: var(--md-font-mono); font-size: 11px; resize: none;"></textarea>
+          </div>
+
+          <div class="m3-card" style="background: var(--md-sys-color-surface-container-lowest);">
+            <div class="card-header">
+              <span class="card-title">提示词二：遇到问题现场协同（推图修轴 / 肉鸽抉择）</span>
+              <button class="btn btn-primary btn-sm" id="btn-copy-prompt-repair">
+                <svg class="icon icon-sm"><use href="#icon-copy"/></svg>
+                <span>复制提示词二</span>
+              </button>
+            </div>
+            <textarea class="input-text" id="text-prompt-repair" rows="4" readonly style="font-family: var(--md-font-mono); font-size: 11px; resize: none;"></textarea>
+          </div>
+        </div>
+
+        <!-- Tab 2: README -->
+        <div class="agent-tab-pane" id="tab-agent-readme">
+          <div style="display: flex; justify-content: flex-end; flex-shrink: 0;">
+            <button class="btn btn-outlined btn-sm" id="btn-open-workspace-folder">
+              <svg class="icon icon-sm"><use href="#icon-folder"/></svg>
+              <span>打开所在文件夹</span>
+            </button>
+          </div>
+          <pre id="text-readme-content"></pre>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-primary" data-close="modal-agent">了解并关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 3: 首次安装 3 步新手向导 Modal -->
+  <div class="modal-overlay hidden" id="modal-wizard">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title">
+          <svg class="icon"><use href="#icon-compass"/></svg>
+          <span>首次安装与环境向导</span>
+        </div>
+        <button class="modal-close-btn" id="wizard-btn-close" data-close="modal-wizard" aria-label="关闭向导">
+          <svg class="icon"><use href="#icon-close"/></svg>
+        </button>
+      </div>
+      <!-- Wizard Stepper Header -->
+      <div class="wizard-stepper">
+        <div class="step-badge active" id="wizard-badge-1">1. 定位 MAA 内核</div>
+        <div class="step-badge" id="wizard-badge-2">2. 模拟器与环境体检</div>
+        <div class="step-badge" id="wizard-badge-3">3. 选择 AI 协同方式</div>
+      </div>
+
+      <div class="modal-body">
+        <!-- Step 1: 定位或安装 MAA -->
+        <div class="wizard-step-pane active" id="wizard-step-1">
+          <div style="font-size: 16px; font-weight: 700;">第 1 步：定位或安装 MAA 内核（MaaCore.dll）</div>
+          <div style="font-size: 12.5px; color: var(--md-sys-color-on-surface-variant);">
+            系统会自动检索现有 MAA 目录。如尚未安装，可直接在此一键自动拉取最新版。
+          </div>
+
+          <div class="m3-card" id="wizard-s1-card" style="background: var(--md-sys-color-surface-container-lowest);">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span class="status-dot neutral" id="wizard-s1-dot"></span>
+              <span style="font-weight: 700; font-size: 14px;" id="wizard-s1-status">正在检索本地 MAA 目录...</span>
+            </div>
+            <div style="font-size: 12px; color: var(--md-sys-color-on-surface-variant);" id="wizard-s1-detail">
+              正在扫描 MaaCore.dll 及 resource 资源完整性...
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+            <button class="btn btn-outlined" id="wizard-btn-browse-maa">
+              <svg class="icon"><use href="#icon-folder"/></svg>
+              <span>浏览选择本地 MAA 文件夹</span>
+            </button>
+            <button class="btn btn-primary" id="wizard-btn-download-maa">
+              <svg class="icon"><use href="#icon-download"/></svg>
+              <span>一键自动下载最新版 MAA</span>
+            </button>
+            <button class="btn btn-tonal" id="wizard-btn-rescan-maa">
+              <svg class="icon"><use href="#icon-refresh"/></svg>
+              <span>重新检索</span>
+            </button>
+          </div>
+
+          <!-- Download progress bar box (hidden until downloading) -->
+          <div class="m3-card card-dl-tinted hidden" id="wizard-dl-box">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="font-size: 12px; font-weight: 600;" id="wizard-dl-status-text">准备下载...</span>
+              <button class="btn btn-danger btn-sm" id="wizard-btn-cancel-dl">取消下载</button>
+            </div>
+            <div class="linear-progress-bar" style="width: 100%; height: 8px; margin-top: 8px;">
+              <div class="linear-progress-fill" id="wizard-dl-progress-fill" style="width: 0%;"></div>
+            </div>
+            <div style="font-size: 11px; text-align: right; margin-top: 4px;" id="wizard-dl-bytes">0.0 MB / -- MB</div>
+          </div>
+        </div>
+
+        <!-- Step 2: 模拟器与环境体检 -->
+        <div class="wizard-step-pane" id="wizard-step-2">
+          <div style="font-size: 16px; font-weight: 700;">第 2 步：连接模拟器与环境体检</div>
+          <div style="font-size: 12.5px; color: var(--md-sys-color-on-surface-variant);">
+            支持 MuMu 12（默认 127.0.0.1:16384）、雷电（127.0.0.1:5555）、蓝叠及夜神模拟器。
+          </div>
+
+          <div class="form-grid">
+            <div class="form-label">模拟器类型：</div>
+            <select class="input-select" id="wizard-s2-emu-type">
+              <option value="auto">auto</option>
+              <option value="mumu12">mumu12</option>
+              <option value="ldplayer">ldplayer</option>
+              <option value="bluestacks">bluestacks</option>
+              <option value="nox">nox</option>
+            </select>
+
+            <div class="form-label">ADB 地址：</div>
+            <input type="text" class="input-text" id="wizard-s2-adb-address" value="127.0.0.1:16384">
+          </div>
+
+          <div style="display: flex; gap: 10px;">
+            <button class="btn btn-primary" id="wizard-btn-probe-s2">
+              <svg class="icon"><use href="#icon-search"/></svg>
+              <span>一键探测模拟器 &amp; 环境体检</span>
+            </button>
+            <button class="btn btn-tonal" id="wizard-btn-launch-s2">
+              <svg class="icon"><use href="#icon-play"/></svg>
+              <span>自动拉起模拟器</span>
+            </button>
+          </div>
+
+          <!-- 3 Diagnostic lights -->
+          <div class="diag-list">
+            <div class="diag-item">
+              <span class="status-dot neutral" id="wizard-dot-perm"></span>
+              <div class="diag-item-title">目录写入权限</div>
+              <div class="diag-item-desc" id="wizard-desc-perm">待体检...</div>
+            </div>
+            <div class="diag-item">
+              <span class="status-dot neutral" id="wizard-dot-maa"></span>
+              <div class="diag-item-title">MAA 内核与资源完整性</div>
+              <div class="diag-item-desc" id="wizard-desc-maa">待体检...</div>
+            </div>
+            <div class="diag-item">
+              <span class="status-dot neutral" id="wizard-dot-adb"></span>
+              <div class="diag-item-title">ADB 连接与 16:9 分辨率</div>
+              <div class="diag-item-desc" id="wizard-desc-adb">待体检...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 3: 选择 AI 协同方式 -->
+        <div class="wizard-step-pane" id="wizard-step-3">
+          <div style="font-size: 16px; font-weight: 700;">第 3 步：选择 AI 协同方式</div>
+          <div style="font-size: 12.5px; color: var(--md-sys-color-on-surface-variant);">
+            日常收菜与本地养成均无需联网大模型即可全速运行。按需选择直连外部 Agent 或配置内置 API Key。
+          </div>
+
+          <div class="spacious-grid">
+            <!-- Card A: External Desktop Agent -->
+            <div class="m3-card card-highlight" id="wizard-card-agent" style="cursor: pointer;">
+              <label class="checkbox-label" style="font-weight: 700; font-size: 13px;">
+                <input type="radio" name="wizard-ai-mode" value="agent_collab" checked>
+                <span>直连桌面 AI Agent（推荐，免 API Key）</span>
+              </label>
+              <div style="font-size: 11.5px; line-height: 1.55; color: var(--md-sys-color-on-surface-variant);">
+                • 零 API 费用：日常收菜与规则推图 100% 本地运行<br>
+                • 协同修轴：遇到卡关自动生成 agent_task.json<br>
+                • 兼容 Antigravity / Claude Code / Cursor
+              </div>
+            </div>
+
+            <!-- Card B: Builtin API -->
+            <div class="m3-card" id="wizard-card-api" style="cursor: pointer; background: var(--md-sys-color-surface-container-lowest);">
+              <label class="checkbox-label" style="font-weight: 700; font-size: 13px;">
+                <input type="radio" name="wizard-ai-mode" value="builtin_api">
+                <span>配置内置 API Key（后台静默调用）</span>
+              </label>
+              <div style="font-size: 11.5px; line-height: 1.55; color: var(--md-sys-color-on-surface-variant);">
+                • 适合无人值守：兼容 OpenAI / DeepSeek / Gemini / Ollama<br>
+                • 自动修轴替补：推图失败后台自动调用模型补丁
+              </div>
+            </div>
+          </div>
+
+          <!-- API Settings Form -->
+          <div class="m3-card" id="wizard-api-form-card" style="background: var(--md-sys-color-surface-container-lowest);">
+            <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+              <span style="font-size: 12px; font-weight: 600;">快捷预设：</span>
+              <button class="btn btn-outlined btn-sm" id="preset-deepseek">DeepSeek</button>
+              <button class="btn btn-outlined btn-sm" id="preset-gemini">Gemini</button>
+              <button class="btn btn-outlined btn-sm" id="preset-ollama">本地 Ollama</button>
+              <button class="btn btn-outlined btn-sm" id="preset-openai">OpenAI</button>
+            </div>
+            <div class="form-grid">
+              <div class="form-label">Base URL：</div>
+              <input type="text" class="input-text" id="wizard-base-url" placeholder="api.openai.com/v1">
+
+              <div class="form-label">API Key：</div>
+              <input type="password" class="input-text" id="wizard-api-key" placeholder="API Key">
+
+              <div class="form-label">Model Name：</div>
+              <div class="form-field-group">
+                <input type="text" class="input-text" id="wizard-model-name" value="gpt-4o-mini">
+                <button class="btn btn-tonal btn-sm" id="wizard-btn-test-api">测试连接</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-text" id="wizard-btn-prev" disabled>上一步</button>
+        <button class="btn btn-primary" id="wizard-btn-next">下一步</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 4: MAA 增量更新确认 Modal -->
+  <div class="modal-overlay hidden" id="modal-maa-update">
+    <div class="modal-card modal-compact">
+      <div class="modal-header">
+        <div class="modal-title">
+          <svg class="icon"><use href="#icon-download"/></svg>
+          <span>发现 MAA 新版本</span>
+        </div>
+        <button class="modal-close-btn" data-close="modal-maa-update" aria-label="关闭">
+          <svg class="icon"><use href="#icon-close"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div style="font-size: 13.5px; line-height: 1.65;">
+          检测到 MAA 内核有新版本可供增量更新：<br>
+          • 本地当前版本：<strong id="update-local-ver">未知</strong><br>
+          • 云端最新版本：<strong id="update-remote-ver" style="color: var(--md-sys-color-primary);">未知</strong><br>
+          • 预计下载大小：<span id="update-size">未知</span>
+        </div>
+        <div class="m3-card" style="max-height: 140px; overflow-y: auto; font-size: 12px; font-family: var(--md-font-mono); background: var(--md-sys-color-surface-container-lowest);" id="update-release-notes">
+          更新说明加载中...
+        </div>
+        <div class="linear-progress-bar hidden" id="update-progress-bar" style="width: 100%; height: 6px;">
+          <div class="linear-progress-fill" id="update-progress-fill"></div>
+        </div>
+        <div style="font-size: 11.5px; color: var(--md-sys-color-on-surface-variant);" id="update-status-msg">
+          覆盖更新将保留 config/、universal_engine/ 与本控制台自身，仅更新 MaaCore.dll 及 resource/。
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-text" id="btn-cancel-maa-update">稍后更新</button>
+        <button class="btn btn-primary" id="btn-confirm-maa-update">立即增量更新</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 5: 决策预览 Modal -->
+  <div class="modal-overlay hidden" id="modal-growth-preview">
+    <div class="modal-card modal-compact">
+      <div class="modal-header">
+        <div class="modal-title">
+          <svg class="icon"><use href="#icon-chip"/></svg>
+          <span>智能自主养成决策预览</span>
+        </div>
+        <button class="modal-close-btn" data-close="modal-growth-preview" aria-label="关闭">
+          <svg class="icon"><use href="#icon-close"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <pre id="text-growth-preview-content" class="preview-pre"></pre>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-text" data-close="modal-growth-preview">关闭</button>
+        <button class="btn btn-primary" id="btn-exec-growth-from-preview">确认并开始养成</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Snackbar / Toast Container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- Scripts -->
+  <script src="js/bridge.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,107 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Syntax check and unit tests
+        run: |
+          python -m compileall universal_engine
+          python -m unittest discover -s universal_engine/tests -v
+
+      - name: Build executable
+        run: |
+          python universal_engine/gui/build_launcher.py
+
+      - name: CI compliance check
+        shell: powershell
+        run: |
+          if (-not (Test-Path "Arknights_AI_Launcher.exe")) {
+            Write-Error "Arknights_AI_Launcher.exe not found after build!"
+            exit 1
+          }
+
+          $forbiddenPatterns = @(
+            "MaaCore.dll",
+            "DirectML.dll",
+            "onnxruntime_maa.dll",
+            "*.onnx",
+            "resource",
+            "launcher_config.json",
+            "gui.new.json",
+            "my_box.json",
+            "agent_task.json"
+          )
+
+          $violation = $false
+          foreach ($pattern in $forbiddenPatterns) {
+            $matches = Get-ChildItem -Path . -Recurse -Filter $pattern -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '\\\.git\\' }
+            if ($matches) {
+              foreach ($item in $matches) {
+                Write-Error "CI compliance violation: forbidden file or asset detected: $($item.FullName)"
+                $violation = $true
+              }
+            }
+          }
+
+          if ($violation) {
+            Write-Error "CI compliance check failed due to forbidden assets in repository!"
+            exit 1
+          }
+
+          Write-Host "CI compliance check passed: no forbidden assets detected."
+
+      - name: Prepare release artifacts
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path release_dist
+          Copy-Item Arknights_AI_Launcher.exe release_dist\
+          Copy-Item LICENSE release_dist\
+          Copy-Item NOTICE.md release_dist\
+          Copy-Item README.md release_dist\
+
+          $zipName = "Arknights_AI_Launcher-${{ github.ref_name }}-win-x64.zip"
+          Compress-Archive -Path release_dist\* -DestinationPath "release_dist\$zipName"
+
+          $exeHash = (Get-FileHash -Algorithm SHA256 "release_dist\Arknights_AI_Launcher.exe").Hash.ToLower()
+          $zipHash = (Get-FileHash -Algorithm SHA256 "release_dist\$zipName").Hash.ToLower()
+
+          Set-Content -Path "release_dist\SHA256SUMS.txt" -Value @(
+            "$exeHash  Arknights_AI_Launcher.exe",
+            "$zipHash  $zipName"
+          ) -Encoding ascii
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            Arknights_AI_Launcher.exe
+            release_dist/Arknights_AI_Launcher-${{ github.ref_name }}-win-x64.zip
+            LICENSE
+            NOTICE.md
+            release_dist/SHA256SUMS.txt
+          generate_release_notes: true

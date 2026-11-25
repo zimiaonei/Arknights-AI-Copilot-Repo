@@ -1,0 +1,58 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.dll
+*.onnx
+
+# Packaging and builds
+dist/
+build/
+*.spec
+*.exe
+*.zip
+_downloads/
+_update_staging/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Environment and secrets
+.env
+.env.*
+
+# Logs and debug output
+*.log
+debug/
+reports/
+cache/
+
+# Local runtime data and personal account configs
+config/gui.new.json
+**/launcher_config.json
+my_box.json
+OperBoxData.json
+DepotData.json
+depot.json
+agent_task.json
+data/
+copilots/
+.old/
+
+# MAA runtime / asset exclusions (non-distribution)
+resource/
+Python/
+
+# Binary images / media assets
+*.png
+*.jpg
+*.jpeg
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
