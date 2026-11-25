@@ -703,7 +703,10 @@ class MaaSession:
             except Exception:
                 pass
         else:
-            print(text)
+            try:
+                print(text)
+            except UnicodeEncodeError:
+                print(text.encode("ascii", errors="replace").decode("ascii"))
 
     def _call_asst_connect_cancellable(self, conn_cfg: str) -> bool:
         """Invoke self._asst.connect in a helper thread so cancel_event aborts within <=0.5s."""

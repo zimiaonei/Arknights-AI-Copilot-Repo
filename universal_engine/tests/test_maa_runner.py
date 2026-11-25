@@ -40,17 +40,17 @@ class MaaRunnerTests(unittest.TestCase):
                  patch.object(maa_runner, "_LOADED_MAA_DIR", None):
                 ok = maa_runner.init_maa_sdk(maa, base_dir=base, use_cache_incremental=True)
                 self.assertTrue(ok)
-                self.assertEqual(calls["path"], maa)
-                self.assertEqual(calls["user_dir"], base)
+                self.assertEqual(calls["path"].resolve(), maa.resolve())
+                self.assertEqual(calls["user_dir"].resolve(), base.resolve())
                 # Cold start: base/cache/resource missing -> falls back to maa/cache
-                self.assertEqual(calls["incremental_path"], maa / "cache")
+                self.assertEqual(calls["incremental_path"].resolve(), (maa / "cache").resolve())
 
             (base / "cache" / "resource").mkdir(parents=True)
             with patch.dict(sys.modules, {"asst": fake_asst_pkg, "asst.asst": fake_asst_mod, "asst.utils": fake_utils_mod}), \
                  patch.object(maa_runner, "_LOADED_MAA_DIR", None):
                 ok2 = maa_runner.init_maa_sdk(maa, base_dir=base, use_cache_incremental=True)
                 self.assertTrue(ok2)
-                self.assertEqual(calls["incremental_path"], base / "cache")
+                self.assertEqual(calls["incremental_path"].resolve(), (base / "cache").resolve())
 
     def test_ensure_game_running_official_vs_bilibili(self):
         for server, expected_pkg in (("Official", "com.hypergryph.arknights"), ("Bilibili", "com.hypergryph.arknights.bilibili")):

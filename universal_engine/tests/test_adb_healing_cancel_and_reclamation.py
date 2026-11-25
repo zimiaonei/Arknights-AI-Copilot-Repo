@@ -234,6 +234,8 @@ class AdbHealingAndCancelTests(unittest.TestCase):
                 return {"ok": False, "cancelled": True}
 
             with patch.object(launcher_gui, "collect_dashboard_snapshot", return_value=snap_stub), \
+                 patch("universal_engine.utils.maa_installer.resolve_maa_path", return_value=Path(tmp)), \
+                 patch("universal_engine.utils.env_doctor.discover_adb_executable", return_value=None), \
                  patch.object(eng, "ensure_maa_ready", return_value={"ok": True, "maa_path": str(tmp)}), \
                  patch.object(eng, "probe_or_launch_emulator", return_value={"connected": True, "adb_address": "127.0.0.1:16384"}), \
                  patch.object(eng, "run_reclamation", side_effect=_blocking_reclamation):

@@ -45,7 +45,10 @@ def _emit(log_callback: Optional[Callable[[str], None]], msg: str) -> None:
             return
         except Exception:
             pass
-    print(msg)
+    try:
+        print(msg)
+    except UnicodeEncodeError:
+        print(msg.encode("ascii", errors="replace").decode("ascii"))
 
 
 def classify_stage_node(stage_query: str, header_hint: str = "") -> str:
