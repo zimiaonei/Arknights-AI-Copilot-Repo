@@ -50,6 +50,9 @@ Python/
 *.png
 *.jpg
 *.jpeg
+*.ico
+!assets/app_icon.ico
+!assets/app_icon.png
 
 # IDE and OS files
 .vscode/

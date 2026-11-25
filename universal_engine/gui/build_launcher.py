@@ -15,6 +15,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 ENTRY_SCRIPT = REPO_ROOT / "universal_engine" / "launcher_gui.py"
 WEB_DIR = REPO_ROOT / "universal_engine" / "gui" / "web"
+ICON_PATH = REPO_ROOT / "assets" / "app_icon.ico"
 EXE_TARGET = REPO_ROOT / "Arknights_AI_Launcher.exe"
 
 
@@ -22,6 +23,8 @@ def build_launcher() -> int:
     """Invoke PyInstaller to compile Arknights_AI_Launcher.exe."""
     if str(REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(REPO_ROOT))
+    if not ICON_PATH.is_file():
+        raise FileNotFoundError(f"Application icon not found at: {ICON_PATH}")
 
     from PyInstaller.utils.hooks import collect_submodules
 
@@ -45,6 +48,8 @@ def build_launcher() -> int:
         "--noconsole",
         "--name",
         "Arknights_AI_Launcher",
+        "--icon",
+        str(ICON_PATH),
         "--paths",
         str(REPO_ROOT),
         "--distpath",
