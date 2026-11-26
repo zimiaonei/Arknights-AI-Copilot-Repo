@@ -431,6 +431,7 @@ class NetworkDisconnectSelfHealingTests(unittest.TestCase):
                 return {"ok": True, "events": []}
 
             with patch.object(eng, "ensure_maa_ready", return_value={"ok": True, "maa_path": str(maa)}), \
+                 patch.object(master_scheduler, "ensure_emulator_ready", return_value={"adb_path": "adb.exe", "adb_addr": "127.0.0.1:16384"}), \
                  patch.object(master_scheduler, "ensure_game_running", return_value="com.hypergryph.arknights.bilibili"), \
                  patch.object(master_scheduler, "init_maa_sdk"), \
                  patch.object(master_scheduler, "MaaSession", return_value=daily_sess), \
