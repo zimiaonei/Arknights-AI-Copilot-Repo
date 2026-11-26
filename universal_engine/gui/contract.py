@@ -250,9 +250,16 @@ def _opt_label_to_val(options: List[Tuple[str, str]], label: str) -> str:
 
 
 def _format_rl_theme_display(theme: str) -> str:
-    prof = roguelike_ai_copilot.get_theme_ui_profile(theme)
-    disp = str(prof.get("display_name") or theme)
-    return f"{disp} ({theme})" if theme else disp
+    raw = str(theme or "").strip()
+    if not raw:
+        prof = roguelike_ai_copilot.get_theme_ui_profile("BlackFlow")
+        return str(prof.get("display_name") or "沉沦者的黑流树海")
+    prof = roguelike_ai_copilot.get_theme_ui_profile(raw)
+    disp = str(prof.get("display_name") or raw)
+    canonical = str(prof.get("theme_key") or raw)
+    if raw == disp:
+        return f"{disp} ({canonical})"
+    return f"{disp} ({raw})"
 
 
 def _format_rl_mode_display(mode_int: Any, mode_label: str = "") -> str:
@@ -308,9 +315,9 @@ def classify_log_tag(line: str) -> str:
         return "story"
     if any(k in line for k in ("[每日战报]", "[战报]", "[DROP]", "[收获]")):
         return "report"
-    if any(k in line for k in ("[LOCK]", "[防错关]")):
+    if any(k in line for k in ("[LOCK]", "[防错关]", "[NET][自愈失败]")):
         return "error"
-    if "[RECOVER]" in line:
+    if any(k in line for k in ("[RECOVER]", "[NET]")):
         return "alert"
     if any(k in line for k in ("[ALERT]", "[RECRUIT]", "[WARN]")):
         return "alert"

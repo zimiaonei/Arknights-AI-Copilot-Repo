@@ -349,6 +349,7 @@ class LauncherController:
 
         self._task_running: bool = False
         self._active_task_kind: Optional[str] = None
+        self._active_task_name: str = ""
         self._maa_updating: bool = False
         self._downloading: bool = False
 
@@ -366,6 +367,7 @@ class LauncherController:
         self._last_task_state: Dict[str, Any] = {
             "running": False,
             "task_kind": None,
+            "task_name": "",
             "status_text": "空闲就绪",
             "progress_mode": "determinate",
             "progress_value": 0.0,
@@ -374,6 +376,7 @@ class LauncherController:
             "level": "normal",
             "ra_button_text": "启动生息演算",
             "ra_button_enabled": True,
+            "task_buttons_disabled": False,
             "stop_enabled": False,
         }
 
@@ -670,9 +673,20 @@ class LauncherController:
         threading.Thread(target=_worker, daemon=True).start()
 
     # ---------- Task State Management ----------
-    def _set_running_state(self, running: bool, status_text: str = "", task_kind: Optional[str] = None) -> None:
+    def _set_running_state(
+        self,
+        running: bool,
+        status_text: str = "",
+        task_kind: Optional[str] = None,
+        task_name: Optional[str] = None,
+    ) -> None:
         self._task_running = running
         self._active_task_kind = task_kind if running else None
+        if running:
+            if task_name is not None:
+                self._active_task_name = str(task_name)
+        else:
+            self._active_task_name = ""
 
         ra_btn_text = "停止生息演算" if (running and self._active_task_kind == "reclamation") else "启动生息演算"
         ra_btn_enabled = True if (not running or self._active_task_kind == "reclamation") else False
@@ -681,6 +695,7 @@ class LauncherController:
         state_payload = {
             "running": running,
             "task_kind": self._active_task_kind,
+            "task_name": self._active_task_name,
             "status_text": status_text or ("任务执行中..." if running else "空闲就绪"),
             "progress_mode": "indeterminate" if running else "determinate",
             "progress_value": 0.0,
@@ -689,6 +704,7 @@ class LauncherController:
             "level": "running" if running else "normal",
             "ra_button_text": ra_btn_text,
             "ra_button_enabled": ra_btn_enabled,
+            "task_buttons_disabled": bool(running),
             "stop_enabled": stop_enabled,
         }
         self._last_task_state = state_payload
@@ -743,24 +759,52 @@ class LauncherController:
         fn: Callable[[], Dict[str, Any]],
         on_done: Optional[Callable[[Dict[str, Any]], None]] = None,
         task_kind: Optional[str] = None,
-    ) -> None:
+        pre_log: str = "",
+    ) -> Dict[str, Any]:
         if self._task_running:
-            self._emit_toast("warn", "提示", "当前已有任务在运行中，请先等待完成或点击「停止任务」。")
-            return
+            cur_name = self._active_task_name or str(self._last_task_state.get("status_text") or "其他任务")
+            msg = f"当前已有任务（{cur_name}）在运行中，请先等待完成或点击「停止任务」。"
+            self._append_log(f"[WARN][互斥拦截] 无法启动「{task_name}」：{msg}")
+            self._emit_toast("warn", "任务运行中", msg)
+            return {
+                "ok": False,
+                "rejected": True,
+                "reason": "task_running",
+                "error": msg,
+                "task_state": dict(self._last_task_state),
+            }
         active_lock = self.engine.check_active_lock()
         if active_lock is not None:
             lock_msg = engine_lock.format_lock_conflict_message(active_lock)
             self._append_log(lock_msg)
             self._emit_toast("warn", "任务冲突 · 禁止双开", lock_msg)
-            return
-        if not self.engine.ensure_maa_ready(auto_download=False).get("ok"):
+            return {
+                "ok": False,
+                "rejected": True,
+                "reason": "engine_locked",
+                "error": lock_msg,
+                "task_state": dict(self._last_task_state),
+            }
+        maa_ready = self.engine.ensure_maa_ready(auto_download=False)
+        if not maa_ready.get("ok"):
+            err_msg = str(maa_ready.get("error") or "未检测到有效 MAA 内核目录，请先在引导向导中绑定或下载 MAA。")
+            self._append_log(f"[WARN][前置拦截] 无法启动「{task_name}」：{err_msg}")
+            self._emit_toast("warn", "MAA 内核未就绪", err_msg)
             self._ui_queue.put(("open_wizard", {}))
-            return
+            return {
+                "ok": False,
+                "rejected": True,
+                "reason": "maa_not_ready",
+                "error": err_msg,
+                "task_state": dict(self._last_task_state),
+            }
 
         self._cancel_event.clear()
         self._manual_resume_event.clear()
         self._tutorial_resume_event.clear()
-        self._set_running_state(True, f"正在执行：{task_name}...", task_kind=task_kind)
+        self._set_running_state(True, f"正在执行：{task_name}...", task_kind=task_kind, task_name=task_name)
+        if pre_log:
+            self._append_log(pre_log)
         self._append_log(f"开始任务：{task_name}")
 
         def _worker() -> None:
@@ -810,6 +854,13 @@ class LauncherController:
             self._refresh_snapshot_async(check_adb=True)
 
         threading.Thread(target=_worker, daemon=True).start()
+        return {
+            "ok": True,
+            "started": True,
+            "task_kind": task_kind,
+            "task_name": task_name,
+            "task_state": dict(self._last_task_state),
+        }
 
     def _stop_current_task(self) -> None:
         if not self._task_running:
@@ -824,7 +875,7 @@ class LauncherController:
 
     # ---------- 10 Core Task Entrypoints ----------
     def start_daily(self) -> Dict[str, Any]:
-        self._run_background_task(
+        return self._run_background_task(
             "一键日常收菜",
             lambda: self.engine.run_daily(
                 log_callback=self._cb_log,
@@ -838,10 +889,9 @@ class LauncherController:
             on_done=self._log_daily_report,
             task_kind="daily",
         )
-        return {"ok": True}
 
     def start_auto_growth(self) -> Dict[str, Any]:
-        self._run_background_task(
+        return self._run_background_task(
             "智能自主养成刷图",
             lambda: self.engine.run_fight(
                 fight_mode="AUTO",
@@ -858,7 +908,6 @@ class LauncherController:
             ),
             task_kind="growth",
         )
-        return {"ok": True}
 
     def preview_growth_plan(self) -> Dict[str, Any]:
         try:
@@ -876,7 +925,7 @@ class LauncherController:
         return {"ok": ok, "plan": plan}
 
     def start_annihilation(self) -> Dict[str, Any]:
-        self._run_background_task(
+        return self._run_background_task(
             "当期剿灭托管",
             lambda: self.engine.run_annihilation(
                 force=True,
@@ -893,12 +942,11 @@ class LauncherController:
             ),
             task_kind="annihilation",
         )
-        return {"ok": True}
 
     def start_push(self, stages_raw: str = "") -> Dict[str, Any]:
         raw = str(stages_raw).strip()
         stages = [s.strip() for s in raw.replace("，", ",").split(",") if s.strip()] if raw else ["auto"]
-        self._run_background_task(
+        return self._run_background_task(
             f"新活动/主线推图 ({','.join(stages)})",
             lambda: self.engine.run_push(
                 stages=stages,
@@ -915,10 +963,9 @@ class LauncherController:
             ),
             task_kind="push",
         )
-        return {"ok": True}
 
     def start_sync_box(self) -> Dict[str, Any]:
-        self._run_background_task(
+        return self._run_background_task(
             "刷新干员与仓库档案",
             lambda: self.engine.sync_box_and_depot(
                 run_maa_tasks=True,
@@ -931,7 +978,6 @@ class LauncherController:
             ),
             task_kind="sync",
         )
-        return {"ok": True}
 
     def set_roguelike_mode(self, mode_label: str) -> Dict[str, Any]:
         ai_on = (mode_label == contract.RL_CARD_MODE_AI)
@@ -954,8 +1000,7 @@ class LauncherController:
             ai_on = bool(cfg.get("roguelike", {}).get("ai_copilot_enabled", False))
             mode_label = contract.RL_CARD_MODE_AI if ai_on else contract.RL_CARD_MODE_PURE
 
-        self._append_log(f"[肉鸽AI] 准备启动集成战略探索 | 模式={mode_label}")
-        self._run_background_task(
+        return self._run_background_task(
             f"集成战略 · {mode_label}",
             lambda: self.engine.run_roguelike(
                 ai_copilot_enabled=ai_on,
@@ -967,12 +1012,11 @@ class LauncherController:
             ),
             on_done=self._log_roguelike_report,
             task_kind="roguelike",
+            pre_log=f"[肉鸽AI] 准备启动集成战略探索 | 模式={mode_label}",
         )
-        return {"ok": True}
 
     def start_roguelike_post_settlement(self) -> Dict[str, Any]:
-        self._append_log("[肉鸽AI] 准备执行一键领奖与科技树自动加点...")
-        self._run_background_task(
+        return self._run_background_task(
             "集成战略一键领奖与加点",
             lambda: self.engine.run_roguelike_post_settlement(
                 auto_claim_rewards=True,
@@ -983,17 +1027,16 @@ class LauncherController:
             ),
             on_done=self._log_roguelike_post_report,
             task_kind="roguelike_post",
+            pre_log="[肉鸽AI] 准备执行一键领奖与科技树自动加点...",
         )
-        return {"ok": True}
 
     def toggle_reclamation(self) -> Dict[str, Any]:
         if self._task_running and self._active_task_kind == "reclamation":
             self._append_log("[生息演算] 用户点击停止生息演算，正在优雅中止任务...")
             self._stop_current_task()
-            return {"ok": True, "action": "stopping"}
+            return {"ok": True, "action": "stopping", "task_state": dict(self._last_task_state)}
 
-        self._append_log("[生息演算] 准备启动生息演算长时托管任务...")
-        self._run_background_task(
+        res = self._run_background_task(
             "生息演算自动刷取",
             lambda: self.engine.run_reclamation(
                 log_callback=self._cb_log,
@@ -1002,8 +1045,10 @@ class LauncherController:
             ),
             on_done=self._log_reclamation_report,
             task_kind="reclamation",
+            pre_log="[生息演算] 准备启动生息演算长时托管任务...",
         )
-        return {"ok": True, "action": "started"}
+        res["action"] = "started" if res.get("ok") else "rejected"
+        return res
 
     def stop_current_task(self) -> Dict[str, Any]:
         self._stop_current_task()
@@ -1046,10 +1091,15 @@ class LauncherController:
 
     def check_maa_update(self) -> Dict[str, Any]:
         if self._maa_updating:
-            return {"ok": False, "error": "MAA 正在更新中"}
+            msg = "MAA 正在更新中，请稍候。"
+            self._append_log(f"[WARN][互斥拦截] {msg}")
+            self._emit_toast("info", "检查更新", msg)
+            return {"ok": False, "rejected": True, "error": msg}
         if self._task_running:
-            self._emit_toast("info", "提示", "当前已有自动化任务在运行中，请先停止任务后再检查更新 MAA。")
-            return {"ok": False, "error": "当前已有任务在运行"}
+            msg = "当前已有自动化任务在运行中，请先停止任务后再检查更新 MAA。"
+            self._append_log(f"[WARN][互斥拦截] 无法检查更新：{msg}")
+            self._emit_toast("warn", "任务运行中", msg)
+            return {"ok": False, "rejected": True, "error": msg}
 
         self._maa_updating = True
         self._append_log("[更新] 正在连接 GitHub / api.maa.plus 检查 MAA 最新版本...")
@@ -2017,15 +2067,30 @@ class LauncherController:
         )
 
     def _log_roguelike_post_report(self, r: Dict[str, Any]) -> None:
+        if r.get("cancelled"):
+            self._append_log("[肉鸽AI] 一键领奖与加点已停止。")
+            return
         if r.get("error"):
-            self._append_log(f"[ERR] 肉鸽一键领奖与加点失败: {r.get('error')}")
+            err = str(r.get("error"))
+            self._append_log(f"[ERR] 肉鸽一键领奖与加点失败: {err}")
+            self._emit_toast("warn", "领奖与加点未完成", err)
             return
         rew = r.get("rewards") or {}
         tech = r.get("tech_tree") or {}
+        theme_disp = r.get("theme_display_name") or r.get("theme", "-")
+        lvl_cnt = int(rew.get("level_rewards_claimed", 0) or 0)
+        comm_cnt = int(rew.get("commission_rewards_claimed", 0) or 0)
+        tech_cnt = int(tech.get("upgraded_count", 0) or 0)
+        extra_note = f" | 提示={tech.get('skipped_reason')}" if tech.get("skipped_reason") else ""
         self._append_log(
-            f"[肉鸽AI] 一键领奖与加点结束(耗时 {r.get('total_elapsed_seconds', 0)}s) | 主题={r.get('theme_display_name') or r.get('theme', '-')} | "
-            f"等级奖励={rew.get('level_rewards_claimed', 0)} · 月度委托={rew.get('commission_rewards_claimed', 0)} | "
-            f"科技树加点={tech.get('upgraded_count', 0)}项"
+            f"[肉鸽AI] 一键领奖与加点结束(耗时 {r.get('total_elapsed_seconds', 0)}s) | 主题={theme_disp} | "
+            f"等级奖励={lvl_cnt} · 月度委托={comm_cnt} | "
+            f"科技树加点={tech_cnt}项{extra_note}"
+        )
+        self._emit_toast(
+            "success",
+            "一键领奖与加点完成",
+            f"{theme_disp}：领奖 {lvl_cnt + comm_cnt} 次，科技树加点 {tech_cnt} 项",
         )
 
     def _log_reclamation_report(self, r: Dict[str, Any]) -> None:

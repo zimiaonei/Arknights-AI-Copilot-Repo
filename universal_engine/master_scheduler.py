@@ -356,6 +356,15 @@ def run_annihilation_pipeline(
     }
 
     res = run_task_with_recovery(session_holder, "Fight", fight_params, config, timeout_sec=2400)
+    if res.get("network_recovery_failed") or session_holder.get("network_recovery_failed"):
+        return {
+            "status": "network_recovery_failed",
+            "week_key": week_key,
+            "runs_finished": 0,
+            "ok": False,
+            "network_recovery_failed": True,
+            "error": str(res.get("error") or session_holder.get("network_recovery_error") or "[NET][自愈失败] 剿灭期间网络掉线自愈失败"),
+        }
     fm = _extract_fight_metrics(res)
 
     if fm["unable_to_agent"]:
@@ -730,6 +739,19 @@ def run_sanity_fight_pipeline(
                     "runs_finished": 0,
                     "stats": [],
                     "cancelled": True,
+                }
+            if res.get("network_recovery_failed") or session_holder.get("network_recovery_failed"):
+                return {
+                    "selected_stage": None,
+                    "recommended_stage": recommended_stage,
+                    "strategy": strategy_reason,
+                    "attempted": attempted,
+                    "runs_finished": 0,
+                    "stats": [],
+                    "ok": False,
+                    "session_lost": True,
+                    "network_recovery_failed": True,
+                    "error": str(res.get("error") or session_holder.get("network_recovery_error") or "[NET][自愈失败] 刷图期间网络掉线自愈失败"),
                 }
 
             fm = _extract_fight_metrics(res)
@@ -1576,7 +1598,20 @@ class MaaEngine:
             return bool(holder["cancelled"])
 
         def _should_stop() -> bool:
-            return bool(_is_user_cancelled() or holder["session_lost"])
+            return bool(_is_user_cancelled() or holder["session_lost"] or holder.get("network_recovery_failed"))
+
+        def _propagate_task_flags(task_res: Optional[Dict[str, Any]]) -> None:
+            if not isinstance(task_res, dict):
+                return
+            if task_res.get("cancelled"):
+                holder["cancelled"] = True
+            if task_res.get("network_recovery_failed"):
+                holder["network_recovery_failed"] = True
+                holder["session_lost"] = True
+                if (task_res.get("error") or task_res.get("error_reason")) and not holder.get("network_recovery_error"):
+                    holder["network_recovery_error"] = str(task_res.get("error") or task_res.get("error_reason"))
+                if task_res.get("recovery_screenshot") and not holder.get("network_recovery_screenshot"):
+                    holder["network_recovery_screenshot"] = str(task_res["recovery_screenshot"])
 
         try:
             if "startup" not in skip_set and not _should_stop():
@@ -1585,8 +1620,7 @@ class MaaEngine:
                 res = run_task_with_recovery(
                     holder, "StartUp", {"start_game_enabled": True, "client_type": spec["client_type"]}, cfg, timeout_sec=300
                 )
-                if res.get("cancelled"):
-                    holder["cancelled"] = True
+                _propagate_task_flags(res)
                 report["tasks"]["StartUp"] = _summarize_task_logs(res, "StartUp")
 
             if "recruit" not in skip_set and not _should_stop():
@@ -1621,8 +1655,7 @@ class MaaEngine:
                     cfg,
                     timeout_sec=300,
                 )
-                if res.get("cancelled"):
-                    holder["cancelled"] = True
+                _propagate_task_flags(res)
                 report["tasks"]["Recruit"] = _summarize_task_logs(res, "Recruit")
 
             if "infrast" not in skip_set and not _should_stop():
@@ -1649,8 +1682,7 @@ class MaaEngine:
                     cfg,
                     timeout_sec=600,
                 )
-                if res.get("cancelled"):
-                    holder["cancelled"] = True
+                _propagate_task_flags(res)
                 infrast_summary = _summarize_task_logs(res, "Infrast")
                 cur_s = holder.get("session")
                 adb_p = getattr(cur_s, "adb_path", "") or ""
@@ -1700,14 +1732,13 @@ class MaaEngine:
                     cfg,
                     timeout_sec=300,
                 )
-                if res.get("cancelled"):
-                    holder["cancelled"] = True
+                _propagate_task_flags(res)
                 report["tasks"]["Mall"] = _summarize_task_logs(res, "Mall")
 
             if "annihilation" not in skip_set and not _should_stop():
                 if progress_callback:
                     progress_callback(5, 6, "周常剿灭 (Annihilation)")
-                report["tasks"]["Annihilation"] = run_annihilation_pipeline(
+                annih_res = run_annihilation_pipeline(
                     holder, cfg, state,
                     force=bool(daily_cfg.get("force_annihilation", False)),
                     max_push_rounds=int(daily_cfg.get("max_push_rounds", 5)),
@@ -1719,6 +1750,8 @@ class MaaEngine:
                     tutorial_handler=tutorial_handler,
                     tutorial_resume_event=tutorial_resume_event,
                 )
+                _propagate_task_flags(annih_res)
+                report["tasks"]["Annihilation"] = annih_res
 
             fight_needs_home_recovery = False
             if "fight" not in skip_set and not _should_stop():
@@ -1751,8 +1784,7 @@ class MaaEngine:
                         tutorial_resume_event=tutorial_resume_event,
                         daily_mode=True,
                     )
-                    if fight_res.get("cancelled"):
-                        holder["cancelled"] = True
+                    _propagate_task_flags(fight_res)
                     report["tasks"]["Fight"] = fight_res
                     if (
                         fight_res.get("selected_stage") is None
@@ -1776,7 +1808,7 @@ class MaaEngine:
                         "error": str(exc),
                     }
 
-            if "award" not in skip_set and not _is_user_cancelled():
+            if "award" not in skip_set and not _is_user_cancelled() and not holder.get("network_recovery_failed"):
                 if progress_callback:
                     progress_callback(6, 6, "返回主界面并领取奖励 (Award)")
                 if holder.get("session_lost"):
@@ -1830,8 +1862,7 @@ class MaaEngine:
                                 cfg,
                                 timeout_sec=240,
                             )
-                            if res.get("cancelled"):
-                                holder["cancelled"] = True
+                            _propagate_task_flags(res)
                             report["tasks"]["Award"] = _summarize_task_logs(res, "Award")
                         except Exception as exc:
                             report["tasks"]["Award"] = {"ok": False, "claimed": False, "error": str(exc)}
@@ -1851,9 +1882,16 @@ class MaaEngine:
 
         was_cancelled = bool((cancel_event and cancel_event.is_set()) or holder.get("cancelled"))
         was_lost = bool(holder.get("session_lost"))
+        was_net_failed = bool(holder.get("network_recovery_failed"))
         report["cancelled"] = was_cancelled
         report["session_lost"] = was_lost
-        report["ok"] = (not was_cancelled) and (not was_lost)
+        if was_net_failed:
+            report["network_recovery_failed"] = True
+            if holder.get("network_recovery_error"):
+                report["error"] = str(holder["network_recovery_error"])
+            if holder.get("network_recovery_screenshot"):
+                report["network_recovery_screenshot"] = str(holder["network_recovery_screenshot"])
+        report["ok"] = (not was_cancelled) and (not was_lost) and (not was_net_failed)
         report["total_elapsed_seconds"] = round(time.time() - t0, 1)
         report["finished_at"] = datetime.now().isoformat(timespec="seconds")
 
@@ -2841,34 +2879,61 @@ class MaaEngine:
 
         if progress_callback:
             progress_callback(2, 3, f"执行 {profile.get('display_name', eff_theme)} 领奖与加点")
-        # Pass capabilities=None so explicit one-click trigger always runs OCR reward claiming & tech-tree upgrade
-        post_res = roguelike_ai_copilot.run_roguelike_post_settlement(
-            adb_path=adb_path,
-            adb_addr=adb_addr,
-            maa_dir=maa_dir,
-            config=post_cfg,
-            theme=eff_theme,
-            capabilities=None,
-            cancel_event=cancel_event,
-            log_callback=log_callback,
-        )
+        # Pass capabilities=None and navigate_to_lobby=True so standalone one-click trigger automatically navigates
+        # to the target Roguelike theme lobby and executes OCR reward claiming & tech-tree auto-upgrade.
+        try:
+            post_res = roguelike_ai_copilot.run_roguelike_post_settlement(
+                adb_path=adb_path,
+                adb_addr=adb_addr,
+                maa_dir=maa_dir,
+                config=post_cfg,
+                theme=eff_theme,
+                capabilities=None,
+                cancel_event=cancel_event,
+                log_callback=log_callback,
+                navigate_to_lobby=True,
+            )
+        except TypeError:
+            post_res = roguelike_ai_copilot.run_roguelike_post_settlement(
+                adb_path=adb_path,
+                adb_addr=adb_addr,
+                maa_dir=maa_dir,
+                config=post_cfg,
+                theme=eff_theme,
+                capabilities=None,
+                cancel_event=cancel_event,
+                log_callback=log_callback,
+            )
         if progress_callback:
             progress_callback(3, 3, "领奖与加点完成")
 
         was_cancelled = bool((cancel_event and cancel_event.is_set()) or post_res.get("cancelled"))
         rew_ok = bool((post_res.get("rewards") or {}).get("ok", True))
         tech_ok = bool((post_res.get("tech_tree") or {}).get("ok", True))
-        ok = (not was_cancelled) and rew_ok and tech_ok and ("skipped_reason" not in post_res)
-        return {
+        post_ok = bool(post_res.get("ok", True))
+        err_text = str(
+            post_res.get("error")
+            or (post_res.get("rewards") or {}).get("error")
+            or (post_res.get("tech_tree") or {}).get("error")
+            or ""
+        )
+        ok = (not was_cancelled) and post_ok and rew_ok and tech_ok and ("skipped_reason" not in post_res) and (not err_text)
+        out_res: Dict[str, Any] = {
             "ok": ok,
             "cancelled": was_cancelled,
             "mode": "roguelike_post_settlement",
             "theme": eff_theme,
             "theme_display_name": profile.get("display_name", eff_theme),
+            "navigation": post_res.get("navigation", {}),
             "rewards": post_res.get("rewards", {}),
             "tech_tree": post_res.get("tech_tree", {}),
             "total_elapsed_seconds": round(time.time() - t0, 1),
         }
+        if err_text:
+            out_res["error"] = err_text
+        elif post_res.get("skipped_reason"):
+            out_res["error"] = str(post_res["skipped_reason"])
+        return out_res
 
     def run_roguelike(
         self,

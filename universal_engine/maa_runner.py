@@ -889,6 +889,7 @@ class MaaSession:
         timeout_sec: int = 1800,
         story_skip_on_copilot: bool = False,
         tick_callback: Optional[Callable[["MaaSession", List[Dict[str, Any]]], None]] = None,
+        detect_network_disconnect: bool = True,
     ) -> Dict[str, Any]:
         if self._asst is None:
             raise RuntimeError("MaaSession 尚未 connect")
@@ -912,6 +913,8 @@ class MaaSession:
                 "sub_errors": [],
                 "log_lines": [],
                 "error_reason": "asst.start() 返回 False",
+                "network_disconnect_detected": False,
+                "network_disconnect_info": None,
             }
 
         timed_out = False
@@ -920,6 +923,11 @@ class MaaSession:
         self._early_stop_reason = ""
         ev_cursor = start_ev_idx
         tick_ev_cursor = start_ev_idx
+        net_ev_cursor = start_ev_idx
+        recent_sub_err_ts: List[float] = []
+        last_net_probe = 0.0
+        network_disconnect_detected = False
+        network_disconnect_info: Optional[Dict[str, Any]] = None
         battle_active = False
         pre_battle_ready = False
         post_battle_ready = False
@@ -943,6 +951,65 @@ class MaaSession:
                 self._asst.stop()
                 timed_out = True
                 break
+
+            if detect_network_disconnect and task_type != "StartUp":
+                cur_net_len = len(self.events)
+                net_trigger = ""
+                now_ts = time.time()
+                for ev in self.events[net_ev_cursor:cur_net_len]:
+                    m = ev.get("message", "")
+                    d = ev.get("details", {}) if isinstance(ev.get("details"), dict) else {}
+                    det = d.get("details", {}) if isinstance(d.get("details"), dict) else {}
+                    tname = str(det.get("task", "") or "")
+                    if m in ("SubTaskStart", "SubTaskCompleted") and "OfflineConfirm" in tname:
+                        net_trigger = "offline_confirm_callback"
+                    elif m == "ConnectionInfo" and d.get("what") in ("Disconnect", "ScreencapFailed"):
+                        net_trigger = "connection_disconnect"
+                    elif m == "SubTaskExtraInfo" and d.get("what") in ("StageDrops", "ProductOfFacility", "FightTimes"):
+                        recent_sub_err_ts.clear()
+                    elif m == "SubTaskError":
+                        ev_ts = float(ev.get("ts") or now_ts)
+                        recent_sub_err_ts = [ts for ts in recent_sub_err_ts if (now_ts - ts) <= 45.0]
+                        recent_sub_err_ts.append(ev_ts)
+                        first_list = d.get("first") if isinstance(d.get("first"), list) else []
+                        sub_blob = f"{d.get('subtask', '')} {d.get('pre_task', '')} {' '.join(str(x) for x in first_list)}"
+                        if any(k in sub_blob for k in ("OfflineConfirm", "Disconnect", "Network")):
+                            net_trigger = "network_subtask_error"
+                        elif len(recent_sub_err_ts) >= 2:
+                            net_trigger = "consecutive_subtask_errors"
+                net_ev_cursor = cur_net_len
+
+                if net_trigger and (now_ts - last_net_probe) >= 3.5:
+                    last_net_probe = now_ts
+                    if _is_real_adb_str(self.adb_path) and _is_real_adb_str(self.adb_addr):
+                        probe = stage_pilot.probe_network_disconnect_via_adb(
+                            self.adb_path,
+                            self.adb_addr,
+                            maa_dir=self.maa_dir,
+                            cancel_event=self.cancel_event,
+                        )
+                        if probe.get("detected"):
+                            network_disconnect_detected = True
+                            network_disconnect_info = probe
+                            kws = probe.get("matched_keywords") or ["OfflineConfirm"]
+                            self._emit_log(
+                                f"[NET][掉线拦截] 任务 {task_type} 触发断线检测 ({net_trigger})，"
+                                f"OCR/视觉确认网络掉线弹窗（命中={kws}），立即中止当前任务链进入自愈重连！"
+                            )
+                            self.request_early_stop("network_disconnect")
+                            early_stop_reason = self._early_stop_reason
+                            self._asst.stop()
+                            break
+                    elif net_trigger in ("offline_confirm_callback", "network_subtask_error", "connection_disconnect"):
+                        network_disconnect_detected = True
+                        network_disconnect_info = {"detected": True, "trigger": net_trigger}
+                        self._emit_log(
+                            f"[NET][掉线拦截] 任务 {task_type} 回调命中网络断线信号 ({net_trigger})，立即中止当前任务链进入自愈重连！"
+                        )
+                        self.request_early_stop("network_disconnect")
+                        early_stop_reason = self._early_stop_reason
+                        self._asst.stop()
+                        break
 
             if story_skip_on_copilot and task_type == "Copilot":
                 cur_len = len(self.events)
@@ -1040,23 +1107,412 @@ class MaaSession:
             "story_probe_battle_failed": story_probe_battle_failed,
             "story_probe_battle_victory": story_probe_battle_victory,
             "story_probe_stars": story_probe_stars,
+            "network_disconnect_detected": network_disconnect_detected,
+            "network_disconnect_info": network_disconnect_info,
         }
 
 
+def _is_real_adb_str(val: Any) -> bool:
+    return isinstance(val, str) and bool(val.strip())
+
+
+def _extract_real_cancel_event(ev: Any) -> Optional[threading.Event]:
+    if ev is not None and callable(getattr(ev, "is_set", None)) and isinstance(ev.is_set(), bool):
+        return ev
+    return None
+
+
+def _force_restart_game_client(
+    config: Dict[str, Any],
+    adb_path: str,
+    adb_addr: str,
+    cancel_event: Optional[threading.Event] = None,
+    log_callback: Optional[Callable[[str], None]] = None,
+    wait_after_stop: float = 2.0,
+    wait_after_start: float = 6.0,
+) -> bool:
+    """Force-stop and relaunch Arknights client on the last disconnect self-healing attempt."""
+    spec = get_server_spec(config)
+    pkg = spec["package"]
+    act = spec["activity"]
+    if log_callback:
+        try:
+            log_callback(f"[NET] 正在强制重启游戏客户端 ({pkg}) 以清除异常网络状态...")
+        except Exception:
+            pass
+    try:
+        _run_cmd([adb_path, "-s", adb_addr, "shell", "am", "force-stop", pkg], timeout=6.0, cancel_event=cancel_event)
+    except OperationCancelledError:
+        raise
+    except Exception:
+        pass
+    if wait_after_stop > 0 and wait_interruptible(wait_after_stop, cancel_event=cancel_event, step=0.25):
+        raise OperationCancelledError("强制重启客户端等待阶段已取消")
+    try:
+        res = _run_cmd(
+            [adb_path, "-s", adb_addr, "shell", "am", "start", "-n", f"{pkg}/{act}"],
+            timeout=6.0,
+            cancel_event=cancel_event,
+        )
+        ok_start = res.returncode == 0
+    except OperationCancelledError:
+        raise
+    except Exception:
+        ok_start = False
+    if wait_after_start > 0 and wait_interruptible(wait_after_start, cancel_event=cancel_event, step=0.25):
+        raise OperationCancelledError("等待游戏重启加载阶段已取消")
+    return ok_start
+
+
 def _has_real_disconnect_error(res: Dict[str, Any]) -> bool:
+    if res.get("network_disconnect_detected") or res.get("early_stop_reason") == "network_disconnect":
+        return True
     for ev in res.get("events", []):
         m = ev.get("message", "")
-        d = ev.get("details", {})
+        d = ev.get("details", {}) if isinstance(ev.get("details"), dict) else {}
         if m in ("InternalError", "InitFailed"):
             return True
         if m == "ConnectionInfo" and d.get("what") in ("Disconnect", "ScreencapFailed"):
             return True
         if m in ("SubTaskStart", "SubTaskCompleted"):
-            det = d.get("details", {})
-            if isinstance(det, dict) and str(det.get("task", "")) in ("OfflineConfirm", "OfflineConfirmImpl"):
+            det = d.get("details", {}) if isinstance(d.get("details"), dict) else {}
+            tname = str(det.get("task", "") or "")
+            if tname in ("OfflineConfirm", "OfflineConfirmImpl") or "OfflineConfirm" in tname:
+                return True
+        if m == "SubTaskError":
+            first = d.get("first") if isinstance(d.get("first"), list) else []
+            blob = f"{d.get('subtask', '')} {d.get('pre_task', '')} {' '.join(str(x) for x in first)}"
+            if "OfflineConfirm" in blob:
                 return True
     log_text = "\n".join(res.get("log_lines", []))
-    return bool(re.search(r"PipelineAnalyzer::analyze.*OfflineConfirm|ScreencapFailed|ConnectionInfo.*Disconnect", log_text))
+    return bool(re.search(r"PipelineAnalyzer::analyze.*OfflineConfirm|OfflineConfirm\.png|ScreencapFailed|ConnectionInfo.*Disconnect", log_text))
+
+
+def _inspect_task_network_disconnect(
+    res: Dict[str, Any],
+    cur_sess: Any,
+    task_type: str = "",
+    cancel_event: Optional[threading.Event] = None,
+    log_callback: Optional[Callable[[str], None]] = None,
+) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
+    """Determine whether a task failure/completion was interrupted by a real network disconnect popup."""
+    if res.get("network_disconnect_detected") or res.get("early_stop_reason") == "network_disconnect":
+        return True, "live_network_disconnect_intercept", res.get("network_disconnect_info")
+
+    adb_path = getattr(cur_sess, "adb_path", "")
+    adb_addr = getattr(cur_sess, "adb_addr", "")
+    maa_dir = getattr(cur_sess, "maa_dir", None)
+    has_real_adb = _is_real_adb_str(adb_path) and _is_real_adb_str(adb_addr)
+
+    direct_signal = _has_real_disconnect_error(res)
+    if direct_signal:
+        # For StartUp that returned ok=True after clicking OfflineConfirmImpl, only treat as stuck
+        # if a fresh screenshot proves the disconnect popup is still on screen.
+        if task_type == "StartUp" and res.get("ok"):
+            if has_real_adb:
+                probe = stage_pilot.probe_network_disconnect_via_adb(
+                    adb_path, adb_addr, maa_dir=maa_dir, cancel_event=cancel_event
+                )
+                if probe.get("detected"):
+                    return True, "startup_still_on_disconnect_popup", probe
+            return False, "", None
+
+        # When real ADB is present, enrich with OCR popup inspection (if screen shows popup)
+        probe_info: Optional[Dict[str, Any]] = None
+        if has_real_adb:
+            probe_info = stage_pilot.probe_network_disconnect_via_adb(
+                adb_path, adb_addr, maa_dir=maa_dir, cancel_event=cancel_event
+            )
+            if probe_info.get("detected") and log_callback:
+                try:
+                    log_callback(
+                        f"[NET][掉线确认] 任务 {task_type} 截屏 OCR 命中掉线弹窗关键字: {probe_info.get('matched_keywords')}"
+                    )
+                except Exception:
+                    pass
+        return True, "callback_or_log_disconnect_signal", probe_info
+
+    # Trigger active OCR probe when a task chain hits >= 2 SubTaskErrors (e.g. consecutive InfrastMfgTask / Trade / Reception)
+    sub_errors = res.get("sub_errors") if isinstance(res.get("sub_errors"), list) else []
+    if not res.get("ok") and len(sub_errors) >= 2 and has_real_adb:
+        probe = stage_pilot.probe_network_disconnect_via_adb(
+            adb_path, adb_addr, maa_dir=maa_dir, cancel_event=cancel_event
+        )
+        if probe.get("detected"):
+            if log_callback:
+                try:
+                    log_callback(
+                        f"[NET][掉线拦截] 任务 {task_type} 连续出现 {len(sub_errors)} 次子任务异常，"
+                        f"主动截屏 OCR 命中掉线弹窗（关键字={probe.get('matched_keywords')}）！"
+                    )
+                except Exception:
+                    pass
+            return True, "consecutive_subtask_errors_ocr_popup", probe
+
+    return False, "", None
+
+
+def recover_from_network_disconnect(
+    session_holder: Dict[str, Any],
+    config: Dict[str, Any],
+    *,
+    max_attempts: int = 3,
+    backoff_seconds: Tuple[float, ...] = (3.0, 6.0, 10.0),
+    force_restart_on_last: bool = True,
+    task_type: str = "",
+    reason: str = "",
+    log_callback: Optional[Callable[[str], None]] = None,
+    cancel_event: Optional[threading.Event] = None,
+    verify_online: bool = True,
+) -> Dict[str, Any]:
+    """Closed-loop network disconnect self-healing (max 3 attempts with backoff + strict online verification).
+
+    Steps per attempt:
+      1. Dismiss disconnect popup by clicking the white circular confirm button (visual/template/fallback (0.50, 0.70))
+         or force-restart the game client on the final attempt if previous attempts stayed stuck.
+      2. Wait for transition back to login/title, reconnect MaaSession, and invoke MAA StartUp.
+      3. Strictly re-verify via screenshot + OCR/template that the screen left the disconnect popup and reached
+         the game Home / online UI (never trusting a false-positive StartUp TaskChainCompleted).
+      4. After exhausting max_attempts, capture an evidence screenshot, log [NET][自愈失败], and abort gracefully.
+    """
+    cur_sess = session_holder.get("session")
+    maa_dir = getattr(cur_sess, "maa_dir", None)
+    base_dir = getattr(cur_sess, "base_dir", None)
+    ev_cb = getattr(cur_sess, "event_callback", None)
+    log_cb = log_callback or getattr(cur_sess, "log_callback", None)
+    raw_cancel = cancel_event if cancel_event is not None else getattr(cur_sess, "cancel_event", None)
+    eff_cancel = _extract_real_cancel_event(raw_cancel)
+    spec = get_server_spec(config)
+
+    def _log(msg: str) -> None:
+        if log_cb:
+            try:
+                log_cb(msg)
+                return
+            except Exception:
+                pass
+        print(msg)
+
+    def _is_cancelled() -> bool:
+        return bool(eff_cancel is not None and eff_cancel.is_set())
+
+    eff_max = max(1, int(max_attempts))
+    last_adb_path = getattr(cur_sess, "adb_path", "") if cur_sess is not None else ""
+    last_adb_addr = getattr(cur_sess, "adb_addr", "") if cur_sess is not None else ""
+    last_err = reason or "network_disconnect"
+    taps_total = 0
+    restarted_client = False
+    last_verify_img: Any = None
+
+    for attempt in range(1, eff_max + 1):
+        if _is_cancelled():
+            return {"ok": False, "cancelled": True, "attempts": attempt - 1, "taps": taps_total}
+
+        if attempt > 1:
+            idx = min(attempt - 2, max(0, len(backoff_seconds) - 1))
+            delay = float(backoff_seconds[idx]) if backoff_seconds else 3.0
+            if delay > 0:
+                _log(f"[NET][自愈 {attempt}/{eff_max}] 退避等待 {delay:.1f}s 后开始下一轮断线恢复...")
+                if wait_interruptible(delay, cancel_event=eff_cancel, step=0.25):
+                    return {"ok": False, "cancelled": True, "attempts": attempt - 1, "taps": taps_total}
+
+        _log(f"[NET][自愈 {attempt}/{eff_max}] 启动网络掉线闭环恢复（任务={task_type or '-'}，触发原因={reason or 'disconnect'}）...")
+
+        active_sess = session_holder.get("session")
+        if active_sess is not None:
+            cand_p = getattr(active_sess, "adb_path", "")
+            cand_a = getattr(active_sess, "adb_addr", "")
+            if _is_real_adb_str(cand_p):
+                last_adb_path = cand_p
+            if _is_real_adb_str(cand_a):
+                last_adb_addr = cand_a
+            try:
+                active_sess.close()
+            except Exception:
+                pass
+
+        if _is_cancelled():
+            return {"ok": False, "cancelled": True, "attempts": attempt - 1, "taps": taps_total}
+
+        has_real_adb = _is_real_adb_str(last_adb_path) and _is_real_adb_str(last_adb_addr)
+        is_last_escalate = bool(force_restart_on_last and eff_max >= 2 and attempt == eff_max)
+
+        try:
+            if is_last_escalate and has_real_adb:
+                restarted_client = True
+                _force_restart_game_client(
+                    config,
+                    last_adb_path,
+                    last_adb_addr,
+                    cancel_event=eff_cancel,
+                    log_callback=_log,
+                    wait_after_stop=2.0,
+                    wait_after_start=6.0,
+                )
+            else:
+                if has_real_adb:
+                    dismiss_res = stage_pilot.dismiss_network_disconnect_popup(
+                        last_adb_path,
+                        last_adb_addr,
+                        maa_dir=maa_dir,
+                        max_taps=2,
+                        wait_after_tap_sec=2.0,
+                        cancel_event=eff_cancel,
+                        log_callback=_log,
+                    )
+                    taps_total += int(dismiss_res.get("taps", 0) or 0)
+                    if dismiss_res.get("cancelled") or _is_cancelled():
+                        return {"ok": False, "cancelled": True, "attempts": attempt, "taps": taps_total}
+                    if dismiss_res.get("taps", 0) > 0 and dismiss_res.get("dismissed"):
+                        _log("[NET] 断线弹窗已关闭，等待游戏退回登录/唤醒界面...")
+                        if wait_interruptible(2.0, cancel_event=eff_cancel, step=0.25):
+                            return {"ok": False, "cancelled": True, "attempts": attempt, "taps": taps_total}
+                    elif dismiss_res.get("still_popup"):
+                        _log("[NET] 点击确认按钮后掉线弹窗仍未消退，继续尝试 StartUp 与后续升级恢复...")
+                ensure_game_running(config, maa_dir=maa_dir, cancel_event=eff_cancel, log_callback=_log)
+        except OperationCancelledError:
+            return {"ok": False, "cancelled": True, "attempts": attempt, "taps": taps_total}
+        except Exception as exc:
+            last_err = f"游戏/弹窗前置恢复异常: {exc}"
+            _log(f"[WARN][NET] 第 {attempt}/{eff_max} 次恢复前置步骤异常: {exc}")
+            continue
+
+        new_sess = MaaSession(
+            maa_dir=maa_dir,
+            config=config,
+            base_dir=base_dir,
+            event_callback=ev_cb,
+            log_callback=log_cb,
+            cancel_event=raw_cancel,
+        )
+        if not new_sess.connect():
+            last_err = "MaaSession.connect 重连失败"
+            _log(f"[WARN][NET] 第 {attempt}/{eff_max} 次 MaaSession 重连失败。")
+            continue
+
+        session_holder["session"] = new_sess
+        new_adb_p = getattr(new_sess, "adb_path", "")
+        new_adb_a = getattr(new_sess, "adb_addr", "")
+        if _is_real_adb_str(new_adb_p) and _is_real_adb_str(new_adb_a):
+            last_adb_path, last_adb_addr = new_adb_p, new_adb_a
+            has_real_adb = True
+
+        # Invoke MAA StartUp to drive login/re-entry
+        try:
+            st_res = new_sess.run_single_task(
+                "StartUp",
+                {"start_game_enabled": True, "client_type": spec["client_type"]},
+                timeout_sec=180,
+                detect_network_disconnect=False,
+            )
+        except TypeError:
+            st_res = new_sess.run_single_task(
+                "StartUp",
+                {"start_game_enabled": True, "client_type": spec["client_type"]},
+                timeout_sec=180,
+            )
+
+        if st_res.get("cancelled") or _is_cancelled():
+            return {"ok": False, "cancelled": True, "attempts": attempt, "taps": taps_total}
+
+        # Mandatory secondary screen verification when real ADB is available
+        if verify_online and has_real_adb:
+            verified_online = False
+            last_verify: Dict[str, Any] = {}
+            for poll_i in range(3):
+                if _is_cancelled():
+                    return {"ok": False, "cancelled": True, "attempts": attempt, "taps": taps_total}
+                img_v = stage_pilot.adb_screencap_image(last_adb_path, last_adb_addr, timeout=5.0, cancel_event=eff_cancel)
+                if img_v is None:
+                    last_verify = {"online": False, "disconnect_popup": False, "reason": "verify_screencap_failed"}
+                    break
+                last_verify_img = img_v
+                last_verify = stage_pilot.is_game_home_or_online_screen(
+                    img_v, maa_dir=maa_dir, cancel_event=eff_cancel
+                )
+                if last_verify.get("disconnect_popup"):
+                    last_err = (
+                        f"StartUp 返回后二次核验仍停留在掉线弹窗"
+                        f"（命中={last_verify.get('disconnect', {}).get('matched_keywords', [])}）"
+                    )
+                    _log(f"[WARN][NET][自愈 {attempt}/{eff_max}] {last_err}，拒绝误判恢复成功！")
+                    break
+                if last_verify.get("online"):
+                    verified_online = True
+                    break
+                if last_verify.get("is_login_or_loading") and poll_i < 2:
+                    _log(f"[NET][自愈 {attempt}/{eff_max}] 画面仍在连接/加载过渡中，等待 3.0s 后二次核验...")
+                    if wait_interruptible(3.0, cancel_event=eff_cancel, step=0.25):
+                        return {"ok": False, "cancelled": True, "attempts": attempt, "taps": taps_total}
+                    continue
+                last_err = f"StartUp 后二次核验未确认回到在线主界面 ({last_verify.get('reason', 'unknown')})"
+                _log(f"[WARN][NET][自愈 {attempt}/{eff_max}] {last_err}")
+                break
+
+            if verified_online:
+                _log(
+                    f"[NET][自愈成功] 第 {attempt}/{eff_max} 次重连与画面二次核验通过"
+                    f"（状态={last_verify.get('reason')}，累计点击确认={taps_total}次，强制重启={restarted_client}）。"
+                )
+                return {
+                    "ok": True,
+                    "cancelled": False,
+                    "attempts": attempt,
+                    "taps": taps_total,
+                    "restarted_client": restarted_client,
+                    "verified": True,
+                    "screen_state": last_verify,
+                }
+        else:
+            if st_res.get("ok", True):
+                _log(f"[NET][自愈成功] 第 {attempt}/{eff_max} 次 StartUp 重连完成。")
+                return {
+                    "ok": True,
+                    "cancelled": False,
+                    "attempts": attempt,
+                    "taps": taps_total,
+                    "restarted_client": restarted_client,
+                    "verified": False,
+                    "screen_state": {},
+                }
+            last_err = str(st_res.get("error_reason") or "StartUp 返回失败")
+            _log(f"[WARN][NET][自愈 {attempt}/{eff_max}] StartUp 未成功 ({last_err})。")
+
+    # All recovery attempts exhausted -> capture evidence screenshot and abort gracefully
+    shot_str = ""
+    if _is_real_adb_str(last_adb_path) and _is_real_adb_str(last_adb_addr):
+        root_dir = Path(base_dir) if base_dir is not None else get_base_dir()
+        shot_path = root_dir / "reports" / f"net_recovery_failed_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+        if capture_adb_screenshot(last_adb_path, last_adb_addr, shot_path, cancel_event=eff_cancel):
+            shot_str = str(shot_path)
+        elif last_verify_img is not None:
+            try:
+                shot_path.parent.mkdir(parents=True, exist_ok=True)
+                last_verify_img.save(shot_path)
+                shot_str = str(shot_path)
+            except Exception:
+                pass
+
+    fail_msg = (
+        f"[NET][自愈失败] 连续 {eff_max} 次网络掉线自愈均失败（任务={task_type or '-'}，原因={last_err}"
+        + (f"，现场截图={shot_str}" if shot_str else "")
+        + "），请检查本机网络或游戏服务器状态，任务已优雅中止。"
+    )
+    _log(fail_msg)
+    session_holder["session_lost"] = True
+    session_holder["network_recovery_failed"] = True
+    session_holder["network_recovery_error"] = fail_msg
+    session_holder["network_recovery_screenshot"] = shot_str
+    return {
+        "ok": False,
+        "cancelled": False,
+        "failed": True,
+        "attempts": eff_max,
+        "taps": taps_total,
+        "restarted_client": restarted_client,
+        "screenshot": shot_str,
+        "error": fail_msg,
+    }
 
 
 def run_task_with_recovery(
@@ -1067,12 +1523,22 @@ def run_task_with_recovery(
     timeout_sec: int = 1800,
     max_retries: int = 1,
     tick_callback: Optional[Callable[[MaaSession, List[Dict[str, Any]]], None]] = None,
+    max_network_attempts: int = 3,
+    allow_network_recovery: bool = True,
+    network_backoff_seconds: Tuple[float, ...] = (3.0, 6.0, 10.0),
 ) -> Dict[str, Any]:
-    """Execute task and reconnect session on real disconnect/ADB failure (never loops on stage unlock errors)."""
+    """Execute task with unified network disconnect detection & closed-loop recovery (never loops on stage errors)."""
     res: Dict[str, Any] = {}
-    spec = get_server_spec(config)
-    for attempt in range(max_retries + 1):
+    max_net_cycles = max(1, int(max_retries)) if allow_network_recovery else 0
+    net_cycles_used = 0
+    recovered_once = False
+    max_loop = max(int(max_retries), max_net_cycles) + 1
+
+    for _attempt in range(max_loop):
         cur_sess = session_holder["session"]
+        log_cb = getattr(cur_sess, "log_callback", None)
+        eff_cancel = _extract_real_cancel_event(getattr(cur_sess, "cancel_event", None))
+
         if tick_callback is not None:
             try:
                 res = cur_sess.run_single_task(task_type, params, timeout_sec=timeout_sec, tick_callback=tick_callback)
@@ -1080,38 +1546,56 @@ def run_task_with_recovery(
                 res = cur_sess.run_single_task(task_type, params, timeout_sec=timeout_sec)
         else:
             res = cur_sess.run_single_task(task_type, params, timeout_sec=timeout_sec)
-        if res.get("ok") or res.get("cancelled"):
+
+        if res.get("cancelled") or (eff_cancel is not None and eff_cancel.is_set()):
             return res
 
-        if attempt < max_retries and _has_real_disconnect_error(res):
-            maa_dir = getattr(cur_sess, "maa_dir", None)
-            base_dir = getattr(cur_sess, "base_dir", None)
-            ev_cb = getattr(cur_sess, "event_callback", None)
-            log_cb = getattr(cur_sess, "log_callback", None)
-            cancel_ev = getattr(cur_sess, "cancel_event", None)
+        is_disconnect, disc_reason, disc_probe = _inspect_task_network_disconnect(
+            res, cur_sess, task_type=task_type, cancel_event=eff_cancel, log_callback=log_cb
+        )
+        if res.get("ok") and not is_disconnect:
+            if recovered_once:
+                out_ok = dict(res)
+                out_ok["network_recovered"] = True
+                return out_ok
+            return res
 
-            cur_sess.close()
-            if cancel_ev is not None and callable(getattr(cancel_ev, "is_set", None)) and cancel_ev.is_set() is True:
-                return res
-            eff_cancel_ev = cancel_ev if (cancel_ev is not None and callable(getattr(cancel_ev, "is_set", None)) and isinstance(cancel_ev.is_set(), bool)) else None
-            ensure_game_running(config, maa_dir=maa_dir, cancel_event=eff_cancel_ev, log_callback=log_cb)
-            new_sess = MaaSession(
-                maa_dir=maa_dir,
-                config=config,
-                base_dir=base_dir,
-                event_callback=ev_cb,
+        if is_disconnect and allow_network_recovery and net_cycles_used < max_net_cycles:
+            net_cycles_used += 1
+            rec = recover_from_network_disconnect(
+                session_holder,
+                config,
+                max_attempts=max_network_attempts,
+                backoff_seconds=network_backoff_seconds,
+                task_type=task_type,
+                reason=disc_reason,
                 log_callback=log_cb,
-                cancel_event=cancel_ev,
+                cancel_event=eff_cancel,
             )
-            if new_sess.connect():
-                session_holder["session"] = new_sess
-                if task_type != "StartUp":
-                    new_sess.run_single_task(
-                        "StartUp",
-                        {"start_game_enabled": True, "client_type": spec["client_type"]},
-                        timeout_sec=180,
-                    )
+            if rec.get("cancelled"):
+                out_c = dict(res)
+                out_c["ok"] = False
+                out_c["cancelled"] = True
+                return out_c
+            if rec.get("ok"):
+                recovered_once = True
+                if log_cb:
+                    try:
+                        log_cb(f"[NET] 已确认恢复在线，自动续跑被中断的任务 {task_type}...")
+                    except Exception:
+                        pass
                 continue
+            out_fail = dict(res)
+            out_fail["ok"] = False
+            out_fail["network_recovery_failed"] = True
+            out_fail["network_recovery"] = rec
+            out_fail["error"] = str(rec.get("error") or "[NET][自愈失败] 网络掉线自愈失败")
+            if rec.get("screenshot"):
+                out_fail["recovery_screenshot"] = rec["screenshot"]
+            if disc_probe is not None:
+                out_fail["network_disconnect_info"] = disc_probe
+            return out_fail
+
         return res
     return res
 
@@ -1774,6 +2258,85 @@ def _run_copilot_round(
             timeout_sec=1800,
             story_skip_on_copilot=story_skip,
         )
+        if not res.get("cancelled"):
+            is_net_disc, net_reason, _net_probe = _inspect_task_network_disconnect(
+                res,
+                sess,
+                task_type="Copilot",
+                cancel_event=_extract_real_cancel_event(cancel_event),
+                log_callback=_emit_round_log,
+            )
+            if is_net_disc:
+                net_holder: Dict[str, Any] = {"session": sess}
+                rec = recover_from_network_disconnect(
+                    net_holder,
+                    config,
+                    max_attempts=3,
+                    task_type=f"Copilot:{stage_code or resolved_copilot.name}",
+                    reason=net_reason,
+                    log_callback=_emit_round_log,
+                    cancel_event=_extract_real_cancel_event(cancel_event),
+                )
+                sess = net_holder.get("session", sess)
+                if rec.get("cancelled"):
+                    res = dict(res)
+                    res["cancelled"] = True
+                elif rec.get("ok"):
+                    adb_path_ok, adb_addr_ok = getattr(sess, "adb_path", ""), getattr(sess, "adb_addr", "")
+                    report_net_rec = {
+                        "round": round_idx,
+                        "elapsed_seconds": res.get("elapsed", 0.0),
+                        "victory": False,
+                        "battle_failed": False,
+                        "network_recovered": True,
+                        "network_recovery": rec,
+                        "copilot_file": str(resolved_copilot),
+                        "report_path": str(report_path.resolve()),
+                        "metrics": {
+                            "kills": None,
+                            "costs": None,
+                            "last_3_actions": [],
+                            "errors": [f"NetworkDisconnectRecovered:{net_reason}"],
+                            "completed_flag": False,
+                            "failed_flag": False,
+                        },
+                        "screenshot": "",
+                        "adb_path": adb_path_ok or "",
+                        "adb_addr": adb_addr_ok or "",
+                        "events_tail": res.get("events", [])[-15:],
+                        "log_tail": res.get("log_lines", [])[-40:],
+                    }
+                    report_path.write_text(json.dumps(report_net_rec, ensure_ascii=False, indent=2), encoding="utf-8")
+                    return 1, report_net_rec
+                else:
+                    adb_path_nf, adb_addr_nf = getattr(sess, "adb_path", ""), getattr(sess, "adb_addr", "")
+                    err_nf = str(rec.get("error") or "[NET][自愈失败] 推图期间网络掉线自愈失败")
+                    report_nf = {
+                        "round": round_idx,
+                        "elapsed_seconds": res.get("elapsed", 0.0),
+                        "victory": False,
+                        "battle_failed": False,
+                        "network_recovery_failed": True,
+                        "network_recovery": rec,
+                        "error": err_nf,
+                        "copilot_file": str(resolved_copilot),
+                        "report_path": str(report_path.resolve()),
+                        "metrics": {
+                            "kills": None,
+                            "costs": None,
+                            "last_3_actions": [],
+                            "errors": [err_nf],
+                            "completed_flag": False,
+                            "failed_flag": False,
+                        },
+                        "screenshot": str(rec.get("screenshot") or ""),
+                        "adb_path": adb_path_nf or "",
+                        "adb_addr": adb_addr_nf or "",
+                        "events_tail": res.get("events", [])[-15:],
+                        "log_tail": res.get("log_lines", [])[-40:],
+                    }
+                    report_path.write_text(json.dumps(report_nf, ensure_ascii=False, indent=2), encoding="utf-8")
+                    return 2, report_nf
         entered_formation_pre = bool(
             prep_res.get("outcome") == "formation"
             or prep_res.get("entered")
@@ -2616,6 +3179,25 @@ def autonomous_clear_stage(
                 "history": history,
             }
 
+        if report.get("network_recovery_failed"):
+            err_msg = str(report.get("error") or f"[NET][自愈失败] 推图关卡 {stage_code} 网络掉线自愈失败")
+            _log(err_msg)
+            return False, {
+                "stage": stage_code,
+                "stage_id": stage_id,
+                "victory": False,
+                "network_recovery_failed": True,
+                "screenshot": report.get("screenshot", ""),
+                "rounds_used": len(history),
+                "history": history,
+                "error": err_msg,
+            }
+
+        if report.get("network_recovered"):
+            _log(f"[NET] 关卡 {stage_code} 第 {round_idx} 轮网络掉线已自愈恢复在线，下一轮将自动重进关卡续跑当前作业。")
+            strategy["reason"] = "网络掉线自愈恢复后重进关卡续跑"
+            continue
+
         if report.get("stage_mismatch"):
             err_msg = str(report.get("error") or f"选关标题校验不符: {stage_code}")
             _log(f"[PUSH][防错关] {err_msg}")
@@ -2940,6 +3522,42 @@ ROGUELIKE_THEMES: Tuple[str, ...] = (
     "Phantom",
 )
 
+ROGUELIKE_THEME_ALIASES: Dict[str, str] = {
+    "blackflow": "BlackFlow",
+    "drowning": "BlackFlow",
+    "沉沦者的黑流树海": "BlackFlow",
+    "黑流树海": "BlackFlow",
+    "jiegarden": "JieGarden",
+    "sui": "JieGarden",
+    "岁的界园志异": "JieGarden",
+    "界园志异": "JieGarden",
+    "sarkaz": "Sarkaz",
+    "萨卡兹的无终奇语": "Sarkaz",
+    "无终奇语": "Sarkaz",
+    "sami": "Sami",
+    "探索者的银凇止境": "Sami",
+    "银凇止境": "Sami",
+    "mizuki": "Mizuki",
+    "水月与深蓝之树": "Mizuki",
+    "深蓝之树": "Mizuki",
+    "phantom": "Phantom",
+    "傀影与猩红孤钻": "Phantom",
+    "猩红孤钻": "Phantom",
+}
+
+
+def _normalize_roguelike_theme_name(raw_theme: str) -> str:
+    cleaned = str(raw_theme or "").strip()
+    if not cleaned:
+        return ""
+    alias_hit = ROGUELIKE_THEME_ALIASES.get(cleaned.lower())
+    if alias_hit:
+        return alias_hit
+    for canonical in ROGUELIKE_THEMES:
+        if canonical.lower() == cleaned.lower():
+            return canonical
+    return cleaned
+
 ROGUELIKE_THEME_DEFAULTS: Dict[str, Dict[str, Any]] = {
     "BlackFlow": {"squad": "指挥分队", "roles": "取长补短", "core_char": "", "mode": 0},
     "JieGarden": {"squad": "指挥分队", "roles": "取长补短", "core_char": "", "mode": 0},
@@ -3173,11 +3791,7 @@ def sync_exploration_from_maa_gui(maa_dir: Optional[Path]) -> Dict[str, Any]:
     rl_out: Dict[str, Any] = {}
     if gui_rl:
         rl_out["use_gui_config"] = True
-        raw_theme = str(gui_rl.get("Theme", "") or "").strip()
-        for canonical in ROGUELIKE_THEMES:
-            if canonical.lower() == raw_theme.lower():
-                raw_theme = canonical
-                break
+        raw_theme = _normalize_roguelike_theme_name(str(gui_rl.get("Theme", "") or ""))
         if raw_theme:
             rl_out["theme"] = raw_theme
         if str(gui_rl.get("Mode", "") or "").strip():
@@ -3289,15 +3903,12 @@ def resolve_roguelike_settings(
     use_gui = bool(ov.get("use_gui_config", rl_cfg.get("use_gui_config", True)))
     gui_task = load_gui_task_config(maa_dir, "Roguelike") if use_gui else {}
 
-    theme = str(_pick_first_present(ov.get("theme"), rl_cfg.get("theme"), gui_task.get("Theme"), default="BlackFlow")).strip()
-    # Normalize theme case
-    for canonical in ROGUELIKE_THEMES:
-        if canonical.lower() == theme.lower():
-            theme = canonical
-            break
+    theme = _normalize_roguelike_theme_name(
+        str(_pick_first_present(ov.get("theme"), rl_cfg.get("theme"), gui_task.get("Theme"), default="BlackFlow"))
+    ) or "BlackFlow"
     theme_def = ROGUELIKE_THEME_DEFAULTS.get(theme, ROGUELIKE_THEME_DEFAULTS["BlackFlow"])
     # Prevent cross-theme config leakage from gui.new.json (e.g. Phantom/Mizuki squad/difficulty leaking into Sarkaz)
-    gui_theme = str(gui_task.get("Theme", "") or "").strip()
+    gui_theme = _normalize_roguelike_theme_name(str(gui_task.get("Theme", "") or ""))
     gui_same_theme = (not gui_theme) or (gui_theme.lower() == theme.lower())
     gui_theme_task = gui_task if gui_same_theme else {}
 
@@ -3840,6 +4451,20 @@ def run_roguelike_task(
         tick_callback=tick_cb,
     )
 
+    if res.get("network_recovery_failed") or session_holder.get("network_recovery_failed"):
+        return {
+            "ok": False,
+            "cancelled": False,
+            "network_recovery_failed": True,
+            "error": str(res.get("error") or session_holder.get("network_recovery_error") or "[NET][自愈失败] 集成战略期间网络掉线自愈失败"),
+            "recovery_screenshot": str(res.get("recovery_screenshot") or session_holder.get("network_recovery_screenshot") or ""),
+            "theme": theme,
+            "mode_label": resolved["mode_label"],
+            "params": params,
+            "capabilities": caps,
+            "metrics": extract_roguelike_metrics(res),
+        }
+
     # Mount 2: Self-healing recovery loop (up to max_recovery_retries=3) when Roguelike fails at
     # initial / stage-selection / strategy-change SubTaskError (e.g. Sarkaz@Roguelike@Begin,
     # Sarkaz@Roguelike@StrategyChange, Sarkaz@Roguelike@Stages).
@@ -3849,6 +4474,8 @@ def run_roguelike_task(
         if (
             res.get("ok")
             or res.get("cancelled")
+            or res.get("network_recovery_failed")
+            or session_holder.get("network_recovery_failed")
             or (eff_cancel and eff_cancel.is_set())
             or not _is_roguelike_begin_error(res)
         ):
@@ -4163,6 +4790,25 @@ def run_reclamation_task(
             timeout_sec=resolved["timeout_sec"],
         )
         metrics = extract_reclamation_metrics(res)
+        if res.get("network_recovery_failed") or session_holder.get("network_recovery_failed"):
+            return {
+                "ok": False,
+                "cancelled": False,
+                "network_recovery_failed": True,
+                "error": str(res.get("error") or session_holder.get("network_recovery_error") or "[NET][自愈失败] 生息演算期间网络掉线自愈失败"),
+                "recovery_screenshot": str(res.get("recovery_screenshot") or session_holder.get("network_recovery_screenshot") or ""),
+                "theme": theme,
+                "mode_label": resolved["mode_label"],
+                "mode_name": resolved["mode_name"],
+                "stage_code": stage_code,
+                "params": params,
+                "capabilities": caps,
+                "entry_navigation": entry_navigation,
+                "entry_retries": entry_retries_used,
+                "cleanup_history": cleanup_history,
+                "guide_popups_dismissed": guide_popups_dismissed,
+                "metrics": metrics,
+            }
         if metrics.get("ok") or metrics.get("cancelled") or (eff_cancel and eff_cancel.is_set()):
             break
 

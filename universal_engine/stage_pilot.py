@@ -7888,3 +7888,374 @@ def navigate_to_reclamation_relaunch_anchor(
         f"请手动打开 {target_up} 直到右下角出现「开启建设」后启动，或更新 MAA 内核至最新版。"
     )
     return result
+
+
+# ======================================================================
+# Global Network Disconnect Popup Detection, Confirm-Button Click & Online Verification
+# ======================================================================
+
+NETWORK_DISCONNECT_KEYWORDS: Tuple[str, ...] = (
+    "与神经网络连接丢失",
+    "神经网络连接丢失",
+    "连接丢失",
+    "请重新连接",
+    "网络连接失败",
+    "网络连接异常",
+    "网络异常",
+    "网络不稳定",
+    "错误号",
+    "错误码",
+    "连接已断开",
+    "无法连接至服务器",
+    "服务器连接失败",
+    "账号验证失效",
+    "请重新登录",
+)
+
+_LOGIN_OR_LOADING_KEYWORDS: Tuple[str, ...] = (
+    "正在尝试与",
+    "取得神经连接",
+    "开始唤醒",
+    "账号登录",
+    "正在获取资源",
+    "正在加载",
+    "点击开始",
+    "RHODESISLAND",
+)
+
+_HOME_ONLINE_KEYWORDS: Tuple[str, ...] = (
+    "终端",
+    "编队",
+    "干员",
+    "采购中心",
+    "公开招募",
+    "基建",
+    "仓库",
+    "任务",
+    "理智",
+    "好友",
+    "档案",
+)
+
+_DISCONNECT_FALLBACK_NORM_XY: Tuple[float, float] = (0.50, 0.70)
+
+
+def locate_disconnect_confirm_button(
+    img: Image.Image,
+    maa_dir: Optional[Path] = None,
+    template_xy: Optional[Tuple[int, int]] = None,
+) -> Tuple[Tuple[int, int], str]:
+    """Locate the white circular checkmark confirm button on the Arknights disconnect popup.
+
+    Priority:
+      1. Visual bright white circle cluster centroid inside the lower-middle dark bar (1280x720: x=[520,760], y=[440,560]).
+      2. Matched MAA OfflineConfirm.png template center (if provided or matched).
+      3. Normalized fallback coordinate ~(0.50, 0.70) -> (640, 504).
+    """
+    img_1280 = img.convert("RGB").resize((1280, 720), Image.Resampling.BILINEAR)
+
+    if np is not None:
+        arr = np.asarray(img_1280, dtype=np.float32)
+        # Search lower-middle dark bar where the white circular checkmark button sits (real capture: cx~640, cy~491, y=472..509)
+        x0, y0, x1, y1 = 520, 452, 760, 555
+        patch = arr[y0:y1, x0:x1]
+        white_mask = (patch[:, :, 0] >= 220) & (patch[:, :, 1] >= 220) & (patch[:, :, 2] >= 220)
+        ys, xs = np.where(white_mask)
+        w_cnt = int(xs.size)
+        if 140 <= w_cnt <= 4500:
+            bw = int(xs.max() - xs.min() + 1)
+            bh = int(ys.max() - ys.min() + 1)
+            aspect = float(bw) / float(max(1, bh))
+            # Check surrounding dark horizontal bar on left/right of the circle to avoid bright non-dialog screens
+            left_bar = arr[y0:y1, 360:480]
+            right_bar = arr[y0:y1, 800:920]
+            surround_luma = float(0.5 * (left_bar.mean() + right_bar.mean()))
+            if 18 <= bw <= 90 and 18 <= bh <= 90 and 0.65 <= aspect <= 1.55 and surround_luma < 120.0:
+                cx = int(round(x0 + float(xs.mean())))
+                cy = int(round(y0 + float(ys.mean())))
+                return (cx, cy), "white_circle_visual"
+
+    if template_xy is not None and template_xy != (0, 0):
+        return (int(template_xy[0]), int(template_xy[1])), "template_OfflineConfirm"
+
+    if maa_dir is not None and np is not None:
+        gray_1280 = np.asarray(img_1280.convert("L"), dtype=np.float32)
+        tpl_path = Path(maa_dir) / "resource" / "template" / "OfflineConfirm.png"
+        if tpl_path.is_file():
+            matched, _score, xy = match_template_roi(gray_1280, tpl_path, (310, 409, 648, 165), threshold=0.76)
+            if matched and xy != (0, 0):
+                return (int(xy[0]), int(xy[1])), "template_OfflineConfirm"
+
+    fb_x = int(round(1280.0 * _DISCONNECT_FALLBACK_NORM_XY[0]))
+    fb_y = int(round(720.0 * _DISCONNECT_FALLBACK_NORM_XY[1]))
+    return (fb_x, fb_y), "fallback_norm_0.50_0.70"
+
+
+def detect_network_disconnect_popup(
+    img: Image.Image,
+    maa_dir: Optional[Path] = None,
+    use_ocr: bool = True,
+    cancel_event: Optional[threading.Event] = None,
+) -> Dict[str, Any]:
+    """Detect Arknights network disconnect modal via OCR keywords and/or OfflineConfirm template."""
+    img_1280 = img.convert("RGB").resize((1280, 720), Image.Resampling.BILINEAR)
+    gray_1280 = np.asarray(img_1280.convert("L"), dtype=np.float32) if np is not None else None
+
+    matched_keywords: List[str] = []
+    ocr_text = ""
+    ocr_hit = False
+
+    if use_ocr and not (cancel_event and cancel_event.is_set()):
+        boxes = find_text_boxes_via_ocr(
+            img,
+            roi=(180, 170, 920, 380),
+            include_inverted=True,
+            timeout=8,
+            cancel_event=cancel_event,
+        )
+        compact_parts = [re.sub(r"\s+", "", str(b.get("compact") or b.get("text") or "")) for b in (boxes or [])]
+        ocr_text = "".join(compact_parts)
+        for kw in NETWORK_DISCONNECT_KEYWORDS:
+            if kw in ocr_text and kw not in matched_keywords:
+                matched_keywords.append(kw)
+        if re.search(r"错误[号码][：:]?\s*-?\d+", ocr_text) and "错误号" not in matched_keywords:
+            matched_keywords.append("错误号")
+        ocr_hit = bool(matched_keywords)
+
+    template_hit = False
+    template_score = 0.0
+    template_xy: Optional[Tuple[int, int]] = None
+    if maa_dir is not None and gray_1280 is not None:
+        tpl_path = Path(maa_dir) / "resource" / "template" / "OfflineConfirm.png"
+        if tpl_path.is_file():
+            m_ok, m_score, m_xy = match_template_roi(gray_1280, tpl_path, (310, 409, 648, 165), threshold=0.78)
+            template_hit = bool(m_ok)
+            template_score = float(m_score)
+            if m_ok:
+                template_xy = m_xy
+
+    detected = bool(ocr_hit or template_hit)
+    confirm_xy, confirm_source = locate_disconnect_confirm_button(
+        img, maa_dir=maa_dir, template_xy=template_xy
+    )
+    return {
+        "detected": detected,
+        "ocr_hit": ocr_hit,
+        "template_hit": template_hit,
+        "template_score": round(template_score, 4),
+        "matched_keywords": matched_keywords,
+        "ocr_text": ocr_text[:200],
+        "confirm_xy": confirm_xy,
+        "confirm_source": confirm_source,
+    }
+
+
+def is_game_home_or_online_screen(
+    img: Image.Image,
+    maa_dir: Optional[Path] = None,
+    cancel_event: Optional[threading.Event] = None,
+) -> Dict[str, Any]:
+    """Strictly verify whether screenshot has left disconnect/login screens and reached Home/online UI."""
+    disc = detect_network_disconnect_popup(img, maa_dir=maa_dir, use_ocr=True, cancel_event=cancel_event)
+    if disc.get("detected"):
+        return {
+            "online": False,
+            "is_home": False,
+            "is_ingame_subpage": False,
+            "is_login_or_loading": False,
+            "disconnect_popup": True,
+            "home_keywords": [],
+            "reason": "still_on_disconnect_popup",
+            "disconnect": disc,
+        }
+
+    img_1280 = img.convert("RGB").resize((1280, 720), Image.Resampling.BILINEAR)
+    gray_1280 = np.asarray(img_1280.convert("L"), dtype=np.float32) if np is not None else None
+
+    boxes = find_text_boxes_via_ocr(img, include_inverted=False, timeout=8, cancel_event=cancel_event)
+    compact = "".join(re.sub(r"\s+", "", str(b.get("compact") or b.get("text") or "")) for b in (boxes or []))
+    upper_compact = compact.upper()
+
+    home_hits = [kw for kw in _HOME_ONLINE_KEYWORDS if kw in compact]
+    login_hits = [kw for kw in _LOGIN_OR_LOADING_KEYWORDS if kw in upper_compact or kw in compact]
+
+    home_tpl_hit = False
+    subpage_tpl_hit = False
+    if maa_dir is not None and gray_1280 is not None:
+        home_tpl_hit, _, _, _ = _match_any_template(
+            gray_1280,
+            Path(maa_dir),
+            [
+                ("SwitchTheme@ToggleSettingsMenu.png", (200, 300, 220, 200), 0.78, None),
+                ("SwitchTheme@ToggleSettingsMenu-v2.png", (200, 300, 220, 200), 0.78, None),
+                ("Default/EnterInfrast.png", (900, 520, 280, 200), 0.78, None),
+                ("Default/Terminal.png", (760, 120, 360, 220), 0.78, None),
+            ],
+        )
+        subpage_tpl_hit, _, _, _ = _match_any_template(
+            gray_1280,
+            Path(maa_dir),
+            [
+                ("QuickSwitch/Menu.png", (150, 0, 220, 80), 0.76, None),
+                ("ReturnButton/Return.png", (0, 0, 180, 80), 0.76, None),
+                ("ReturnButton/Return-White.png", (0, 0, 180, 80), 0.76, None),
+            ],
+        )
+
+    is_home = bool(len(home_hits) >= 2 or (home_tpl_hit and not login_hits))
+    is_login_or_loading = bool(login_hits and not is_home)
+    is_ingame_subpage = bool((subpage_tpl_hit or "开始探索" in compact or "长期探索" in compact) and not is_login_or_loading)
+    online = bool((is_home or is_ingame_subpage) and not is_login_or_loading)
+
+    reason = (
+        "home_verified"
+        if is_home
+        else ("ingame_subpage_verified" if is_ingame_subpage else ("login_or_loading" if is_login_or_loading else "unknown_not_online"))
+    )
+    return {
+        "online": online,
+        "is_home": is_home,
+        "is_ingame_subpage": is_ingame_subpage,
+        "is_login_or_loading": is_login_or_loading,
+        "disconnect_popup": False,
+        "home_keywords": home_hits,
+        "login_keywords": login_hits,
+        "home_template_hit": home_tpl_hit,
+        "reason": reason,
+        "disconnect": disc,
+    }
+
+
+def probe_network_disconnect_via_adb(
+    adb_path: str,
+    adb_addr: str,
+    maa_dir: Optional[Path] = None,
+    cancel_event: Optional[threading.Event] = None,
+) -> Dict[str, Any]:
+    """Capture screen via ADB and check whether the network disconnect modal is displayed."""
+    img = adb_screencap_image(adb_path, adb_addr, timeout=5.0, cancel_event=cancel_event)
+    if img is None:
+        return {
+            "screenshot_ok": False,
+            "detected": False,
+            "ocr_hit": False,
+            "template_hit": False,
+            "matched_keywords": [],
+            "confirm_xy": (640, 504),
+            "confirm_source": "fallback_norm_0.50_0.70",
+        }
+    res = detect_network_disconnect_popup(img, maa_dir=maa_dir, use_ocr=True, cancel_event=cancel_event)
+    res["screenshot_ok"] = True
+    res["img_size"] = img.size
+    return res
+
+
+def dismiss_network_disconnect_popup(
+    adb_path: str,
+    adb_addr: str,
+    maa_dir: Optional[Path] = None,
+    max_taps: int = 3,
+    wait_after_tap_sec: float = 2.0,
+    cancel_event: Optional[threading.Event] = None,
+    log_callback: Optional[Callable[[str], None]] = None,
+) -> Dict[str, Any]:
+    """Detect and tap the white circular confirm button on disconnect popup, verifying dismissal."""
+    taps = 0
+    detected_any = False
+    last_detect: Dict[str, Any] = {}
+    tapped_coords: List[Tuple[int, int]] = []
+
+    for tap_idx in range(max(1, int(max_taps))):
+        if cancel_event and cancel_event.is_set():
+            return {
+                "detected": detected_any,
+                "dismissed": False,
+                "cancelled": True,
+                "taps": taps,
+                "tapped_coords": tapped_coords,
+                "still_popup": detected_any,
+                "last_detect": last_detect,
+            }
+
+        img = adb_screencap_image(adb_path, adb_addr, timeout=5.0, cancel_event=cancel_event)
+        if img is None:
+            return {
+                "detected": detected_any,
+                "dismissed": False,
+                "cancelled": False,
+                "taps": taps,
+                "tapped_coords": tapped_coords,
+                "still_popup": False,
+                "error": "screencap_failed",
+                "last_detect": last_detect,
+            }
+
+        det = detect_network_disconnect_popup(img, maa_dir=maa_dir, use_ocr=True, cancel_event=cancel_event)
+        last_detect = det
+        if not det.get("detected"):
+            return {
+                "detected": detected_any,
+                "dismissed": True,
+                "cancelled": False,
+                "taps": taps,
+                "tapped_coords": tapped_coords,
+                "still_popup": False,
+                "last_detect": det,
+            }
+
+        detected_any = True
+        cx, cy = det["confirm_xy"]
+        src = det.get("confirm_source", "unknown")
+        # On retry tap if visual/template center didn't dismiss it, alternate with exact normalized fallback (0.50, 0.70) / (0.50, 0.682)
+        if tap_idx == 1 and src != "fallback_norm_0.50_0.70":
+            cx, cy = 640, 504
+            src = "fallback_norm_0.50_0.70"
+        elif tap_idx >= 2:
+            cx, cy = 640, 491
+            src = "fallback_norm_0.50_0.682"
+
+        kws = det.get("matched_keywords") or ["OfflineConfirm"]
+        _emit(
+            log_callback,
+            f"[NET] 检测到网络掉线弹窗（命中={kws}），第 {tap_idx + 1}/{max_taps} 次点击白色确认圆钮 ({cx}, {cy}) [{src}]...",
+        )
+        adb_tap_norm(adb_path, adb_addr, cx, cy, img.width, img.height, cancel_event=cancel_event)
+        taps += 1
+        tapped_coords.append((cx, cy))
+
+        if wait_after_tap_sec > 0 and wait_interruptible(wait_after_tap_sec, cancel_event=cancel_event, step=0.25):
+            return {
+                "detected": True,
+                "dismissed": False,
+                "cancelled": True,
+                "taps": taps,
+                "tapped_coords": tapped_coords,
+                "still_popup": True,
+                "last_detect": det,
+            }
+
+    # Final verification after last tap
+    img_after = adb_screencap_image(adb_path, adb_addr, timeout=5.0, cancel_event=cancel_event)
+    if img_after is not None:
+        det_after = detect_network_disconnect_popup(img_after, maa_dir=maa_dir, use_ocr=True, cancel_event=cancel_event)
+        last_detect = det_after
+        still_popup = bool(det_after.get("detected"))
+        return {
+            "detected": detected_any,
+            "dismissed": not still_popup,
+            "cancelled": False,
+            "taps": taps,
+            "tapped_coords": tapped_coords,
+            "still_popup": still_popup,
+            "last_detect": det_after,
+        }
+
+    return {
+        "detected": detected_any,
+        "dismissed": False,
+        "cancelled": False,
+        "taps": taps,
+        "tapped_coords": tapped_coords,
+        "still_popup": True,
+        "last_detect": last_detect,
+    }

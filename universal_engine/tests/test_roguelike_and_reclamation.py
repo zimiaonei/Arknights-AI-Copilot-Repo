@@ -592,13 +592,20 @@ class RoguelikePostSettlementRewardsAndTechTreeTests(unittest.TestCase):
         canvas = Image.new("RGB", (1280, 720), (18, 22, 30))
         draw = ImageDraw.Draw(canvas)
         expected = [(260, 240), (540, 380), (840, 290)]
-        colors = [(250, 210, 80), (90, 230, 245), (245, 245, 245)]
-        for (cx, cy), col in zip(expected, colors):
-            draw.ellipse((cx - 18, cy - 18, cx + 18, cy + 18), fill=col)
+        # Warm gold accent, bright cyan accent, and white-halo grey stone frontier node
+        draw.ellipse((260 - 18, 240 - 18, 260 + 18, 240 + 18), fill=(250, 210, 80))
+        draw.ellipse((540 - 18, 380 - 18, 540 + 18, 380 + 18), fill=(90, 230, 245))
+        draw.ellipse((840 - 28, 290 - 28, 840 + 28, 290 + 28), fill=(248, 248, 248))
+        draw.ellipse((840 - 18, 290 - 18, 840 + 18, 290 + 18), fill=(95, 98, 104))
 
         nodes = detect_upgradeable_tech_nodes(canvas)
         self.assertEqual(len(nodes), 3)
-        for exp_xy, got in zip(expected, nodes):
+        # Glowing-halo frontier node (840, 290) is prioritized first, followed by accent nodes left-to-right
+        self.assertTrue(nodes[0]["has_halo"])
+        self.assertLess(abs(nodes[0]["cx"] - 840), 25)
+        self.assertLess(abs(nodes[0]["cy"] - 290), 25)
+        accent_sorted = sorted(nodes[1:], key=lambda n: n["cx"])
+        for exp_xy, got in zip(expected[:2], accent_sorted):
             self.assertLess(abs(got["cx"] - exp_xy[0]), 25)
             self.assertLess(abs(got["cy"] - exp_xy[1]), 25)
 

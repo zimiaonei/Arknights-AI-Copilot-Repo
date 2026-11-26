@@ -1124,6 +1124,11 @@ input, textarea {
   cursor: not-allowed;
 }
 
+.pill-action.is-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* Inputs & Form Elements */
 .input-text {
   width: 100%;

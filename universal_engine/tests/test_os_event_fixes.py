@@ -23,7 +23,7 @@ class OsEventFixesRegressionTests(unittest.TestCase):
     # 1. Blue-background event map badge accuracy & dynamic mid-chapter -ST- insertion
     # ==================================================================
     def test_blue_bg_map_distinguishes_uncleared_os_st2_and_unplayed_nodes(self):
-        shot_os5 = REPO_ROOT / "reports" / "push_OS-5_fail_round_1.png"
+        shot_os5 = REPO_ROOT / "reports" / "push_abort_OS-ST-2_20261122_224849.png"
         shot_os3 = REPO_ROOT / "reports" / "push_OS-3_victory_round_1.png"
         shot_os1 = REPO_ROOT / "reports" / "push_OS-1_victory_round_1.png"
         if not (shot_os5.is_file() and (REPO_ROOT / "resource" / "template").is_dir() and sys.platform == "win32"):
@@ -559,8 +559,8 @@ class OsEventFixesRegressionTests(unittest.TestCase):
             self.assertEqual(mock_hs2.call_args.kwargs.get("next_stage"), "OS-5")
 
     def test_mid_chapter_story_queue_prunes_3star_keeps_partial_star_and_advances_to_os5(self):
-        # 1. Real OS-ST-2 map screenshots: 3-star OS-2~OS-4 must NOT be queued behind OS-ST-2
-        for rel in ("reports/push_abort_OS-ST-2_20261122_224849.png", "reports/push_OS-5_fail_round_1.png"):
+        # 1. Real OS-ST-2 map screenshot (timestamped immutable capture): 3-star OS-2~OS-4 must NOT be queued behind OS-ST-2
+        for rel in ("reports/push_abort_OS-ST-2_20261122_224849.png",):
             p = REPO_ROOT / rel
             if p.is_file() and (REPO_ROOT / "resource" / "template").is_dir() and sys.platform == "win32":
                 with Image.open(p) as im:

@@ -9,6 +9,18 @@
   var VALID_SCHEMES = ['light', 'dark'];
   var LS_PALETTE_KEY = 'prts_m3_palette';
   var LS_SCHEME_KEY = 'prts_m3_scheme';
+  var MUTEX_TASK_BUTTON_IDS = [
+    'btn-start-daily',
+    'btn-start-annihilation',
+    'btn-start-push',
+    'btn-start-auto-growth',
+    'btn-exec-growth-from-preview',
+    'btn-sync-box',
+    'btn-start-roguelike',
+    'btn-rl-settlement'
+  ];
+  var lastToastSig = '';
+  var lastToastTs = 0;
 
   // State Store
   var appState = {
@@ -177,8 +189,17 @@
     var container = $('toast-container');
     if (!container) return;
 
-    var toast = document.createElement('div');
     var normalized = level || 'info';
+    var msgText = String(message || '');
+    var sig = normalized + '|' + msgText;
+    var now = Date.now();
+    if (msgText && sig === lastToastSig && (now - lastToastTs) < 1200) {
+      return;
+    }
+    lastToastSig = sig;
+    lastToastTs = now;
+
+    var toast = document.createElement('div');
     toast.className = 'toast toast-' + normalized;
 
     var dot = document.createElement('span');
@@ -187,7 +208,7 @@
     toast.appendChild(dot);
 
     var text = document.createElement('span');
-    text.textContent = (title ? '[' + title + '] ' : '') + (message || '');
+    text.textContent = (title ? '[' + title + '] ' : '') + msgText;
     toast.appendChild(text);
 
     container.appendChild(toast);
@@ -196,6 +217,27 @@
         toast.parentNode.removeChild(toast);
       }
     }, 4000);
+  }
+
+  function handleTaskStartResult(contextTitle) {
+    return function (res) {
+      if (res && res.task_state) {
+        updateTaskStateUI(res.task_state);
+      }
+      if (res && res.ok === false) {
+        var msg = res.error || res.message || '当前无法启动任务，请先等待现有任务完成或检查配置。';
+        showToast('warn', contextTitle || '操作被拦截', msg);
+      }
+    };
+  }
+
+  function guardTaskNotRunning(contextTitle) {
+    if (appState.taskState && appState.taskState.running) {
+      var curStatus = appState.taskState.status_text || '其他任务';
+      showToast('warn', contextTitle || '任务运行中', '当前已有任务（' + curStatus + '）在运行中，请先等待完成或点击「停止任务」。');
+      return false;
+    }
+    return true;
   }
 
   // Navigation Drawer & Page View Switching
@@ -615,8 +657,11 @@
     var btnStop = $('btn-global-stop');
     var btnToggleRaBtn = $('btn-toggle-reclamation');
     var btnToggleRa = $('btn-toggle-ra-text');
+    var btnCheckUpdate = $('btn-check-update');
+    var isRunning = Boolean(state.running);
+    var mutexDisabled = typeof state.task_buttons_disabled === 'boolean' ? state.task_buttons_disabled : isRunning;
 
-    if (state.running) {
+    if (isRunning) {
       if (statusBox) statusBox.classList.remove('idle');
       if (dotTask) dotTask.className = 'status-dot success';
       if (textTask) textTask.textContent = state.status_text || '任务执行中...';
@@ -634,8 +679,28 @@
       }
     } else {
       if (statusBox) statusBox.classList.add('idle');
+      if (textTask) textTask.textContent = state.status_text || '就绪';
       if (btnStop) btnStop.disabled = true;
       if (progressBar) progressBar.classList.add('hidden');
+    }
+
+    // Unified running-state lock for all mutually exclusive launch buttons across all pages
+    var lockTitle = mutexDisabled ? '当前已有任务运行中，请先等待完成或点击「停止任务」' : '';
+    for (var i = 0; i < MUTEX_TASK_BUTTON_IDS.length; i++) {
+      var mBtn = $(MUTEX_TASK_BUTTON_IDS[i]);
+      if (mBtn) {
+        mBtn.disabled = mutexDisabled;
+        mBtn.title = lockTitle;
+      }
+    }
+    if (btnCheckUpdate) {
+      if (mutexDisabled) {
+        btnCheckUpdate.classList.add('is-disabled');
+        btnCheckUpdate.title = lockTitle;
+      } else {
+        btnCheckUpdate.classList.remove('is-disabled');
+        btnCheckUpdate.title = '';
+      }
     }
 
     if (state.ra_button_text && btnToggleRa) {
@@ -643,6 +708,7 @@
     }
     if (typeof state.ra_button_enabled === 'boolean' && btnToggleRaBtn) {
       btnToggleRaBtn.disabled = !state.ra_button_enabled;
+      btnToggleRaBtn.title = !state.ra_button_enabled ? lockTitle : '';
     }
   }
 
@@ -1437,7 +1503,9 @@
     var btnCheckUpdate = $('btn-check-update');
     if (btnCheckUpdate) {
       btnCheckUpdate.addEventListener('click', function () {
-        PrtsBridge.checkMaaUpdate().catch(handleBridgeError('检查更新失败'));
+        PrtsBridge.checkMaaUpdate()
+          .then(handleTaskStartResult('检查更新'))
+          .catch(handleBridgeError('检查更新失败'));
       });
     }
 
@@ -1516,14 +1584,20 @@
     var btnStartDaily = $('btn-start-daily');
     if (btnStartDaily) {
       btnStartDaily.addEventListener('click', function () {
-        PrtsBridge.startDaily().catch(handleBridgeError('启动日常失败'));
+        if (!guardTaskNotRunning('一键日常收菜')) return;
+        PrtsBridge.startDaily()
+          .then(handleTaskStartResult('一键日常收菜'))
+          .catch(handleBridgeError('启动日常失败'));
       });
     }
 
     var btnStartAnni = $('btn-start-annihilation');
     if (btnStartAnni) {
       btnStartAnni.addEventListener('click', function () {
-        PrtsBridge.startAnnihilation().catch(handleBridgeError('启动剿灭失败'));
+        if (!guardTaskNotRunning('当期剿灭托管')) return;
+        PrtsBridge.startAnnihilation()
+          .then(handleTaskStartResult('当期剿灭托管'))
+          .catch(handleBridgeError('启动剿灭失败'));
       });
     }
 
@@ -1560,16 +1634,22 @@
     var btnStartPush = $('btn-start-push');
     if (btnStartPush) {
       btnStartPush.addEventListener('click', function () {
+        if (!guardTaskNotRunning('新活动/主线推图')) return;
         var stageInput = $('input-push-stage');
         var val = stageInput ? stageInput.value.trim() : '';
-        PrtsBridge.startPush(val).catch(handleBridgeError('启动推图失败'));
+        PrtsBridge.startPush(val)
+          .then(handleTaskStartResult('新活动/主线推图'))
+          .catch(handleBridgeError('启动推图失败'));
       });
     }
 
     var btnStartAutoGrowth = $('btn-start-auto-growth');
     if (btnStartAutoGrowth) {
       btnStartAutoGrowth.addEventListener('click', function () {
-        PrtsBridge.startAutoGrowth().catch(handleBridgeError('启动自主养成失败'));
+        if (!guardTaskNotRunning('智能自主养成')) return;
+        PrtsBridge.startAutoGrowth()
+          .then(handleTaskStartResult('智能自主养成'))
+          .catch(handleBridgeError('启动自主养成失败'));
       });
     }
 
@@ -1594,15 +1674,21 @@
     var btnExecGrowthFromPreview = $('btn-exec-growth-from-preview');
     if (btnExecGrowthFromPreview) {
       btnExecGrowthFromPreview.addEventListener('click', function () {
+        if (!guardTaskNotRunning('智能自主养成')) return;
         closeModal('modal-growth-preview');
-        PrtsBridge.startAutoGrowth().catch(handleBridgeError('启动自主养成失败'));
+        PrtsBridge.startAutoGrowth()
+          .then(handleTaskStartResult('智能自主养成'))
+          .catch(handleBridgeError('启动自主养成失败'));
       });
     }
 
     var btnSyncBox = $('btn-sync-box');
     if (btnSyncBox) {
       btnSyncBox.addEventListener('click', function () {
-        PrtsBridge.startSyncBox().catch(handleBridgeError('刷新档案失败'));
+        if (!guardTaskNotRunning('刷新干员与仓库')) return;
+        PrtsBridge.startSyncBox()
+          .then(handleTaskStartResult('刷新干员与仓库'))
+          .catch(handleBridgeError('刷新档案失败'));
       });
     }
 
@@ -1617,22 +1703,30 @@
     var btnStartRl = $('btn-start-roguelike');
     if (btnStartRl) {
       btnStartRl.addEventListener('click', function () {
+        if (!guardTaskNotRunning('集成战略探索')) return;
         var mode = selectCardMode ? selectCardMode.value : '';
-        PrtsBridge.startRoguelike(mode).catch(handleBridgeError('启动集成战略失败'));
+        PrtsBridge.startRoguelike(mode)
+          .then(handleTaskStartResult('集成战略探索'))
+          .catch(handleBridgeError('启动集成战略失败'));
       });
     }
 
     var btnRlSettlement = $('btn-rl-settlement');
     if (btnRlSettlement) {
       btnRlSettlement.addEventListener('click', function () {
-        PrtsBridge.startRoguelikePostSettlement().catch(handleBridgeError('领奖与加点失败'));
+        if (!guardTaskNotRunning('一键领奖与加点')) return;
+        PrtsBridge.startRoguelikePostSettlement()
+          .then(handleTaskStartResult('一键领奖与加点'))
+          .catch(handleBridgeError('领奖与加点失败'));
       });
     }
 
     var btnToggleRa = $('btn-toggle-reclamation');
     if (btnToggleRa) {
       btnToggleRa.addEventListener('click', function () {
-        PrtsBridge.toggleReclamation().catch(handleBridgeError('生息演算操作失败'));
+        PrtsBridge.toggleReclamation()
+          .then(handleTaskStartResult('生息演算'))
+          .catch(handleBridgeError('生息演算操作失败'));
       });
     }
 

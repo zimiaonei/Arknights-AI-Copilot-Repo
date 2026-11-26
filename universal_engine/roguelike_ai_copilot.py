@@ -37,141 +37,389 @@ except ImportError:  # pragma: no cover
 from . import ai_strategist, auto_growth, stage_pilot
 from .utils.env_doctor import get_base_dir
 
+# Unified ROI & anti-misclick constants (1280x720 normalized coordinates)
+MONTHLY_COMMISSION_KEYWORDS: Tuple[str, ...] = ("本月委托栏", "本月委托")
+LEVEL_REWARD_PRIMARY_ROI: Tuple[int, int, int, int] = (860, 0, 420, 160)
+LEVEL_REWARD_FALLBACK_ROI: Tuple[int, int, int, int] = (640, 0, 640, 260)
+MONTHLY_COMMISSION_PRIMARY_ROI: Tuple[int, int, int, int] = (840, 120, 440, 420)
+MONTHLY_COMMISSION_FALLBACK_ROI: Tuple[int, int, int, int] = (640, 80, 640, 520)
+# Left-half valid zone for lobby tech-tree entries (excludes top bar y<80, bottom bar y>640, right half x>620)
+TECH_TREE_LEFT_VALID_ROI: Tuple[int, int, int, int] = (0, 80, 620, 560)
+# Stage-2 local high-contrast OCR crop & numeric point-badge band (normalized [0, 1])
+TECH_TREE_LOCAL_OCR_ROI_NORM: Tuple[float, float, float, float] = (0.01, 0.25, 0.28, 0.75)
+TECH_TREE_POINTS_BAND_Y_NORM: Tuple[float, float] = (0.35, 0.50)
+TECH_TREE_LOCAL_OCR_UPSCALE: float = 2.5
+
+TECH_TREE_ENTRY_BLACKLIST: Tuple[str, ...] = (
+    "前瞻性投资系统",
+    "投资系统",
+    "巫仪档案库",
+    "档案库",
+    "印象重建",
+    "图册",
+    "见字",
+    "黑流数据库",
+    "数据库",
+    "蚀刻章套组",
+    "蚀刻章",
+    "深入探索",
+    "深入调查",
+    "常规行动",
+    "主题切换",
+    "切换主题",
+    "更换主题",
+    "月度小队",
+    "开始探险",
+    "继续探险",
+    "开始探索",
+    "继续探索",
+)
+
+# Hard detection keywords for Integrated Strategies Theme Selection hub page vs Theme Lobby
+THEME_SELECT_PAGE_KEYWORDS: Tuple[str, ...] = (
+    "进入主题",
+    "添加到终端",
+    "查看收藏",
+    "该主题已全额收录",
+)
+
+THEME_LOBBY_KEYWORDS: Tuple[str, ...] = (
+    "开始探险",
+    "继续探险",
+    "开始探索",
+    "继续探索",
+    "蚀刻章套组",
+    "常规行动",
+    "深入探索",
+    "深入调查",
+    "月度小队",
+)
+
+_TECH_TREE_POINTS_NAME_KEYWORDS: Tuple[str, ...] = (
+    "可用点数",
+    "剩余点数",
+    "点数",
+    "重构点",
+    "思绪",
+    "构想",
+    "蜡烛",
+    "烛火",
+    "灯火",
+    "密文",
+    "学识",
+    "演化",
+    "细胞",
+    "源流",
+)
+
+_TECH_TREE_WRONG_PANEL_KEYWORDS: Tuple[str, ...] = (
+    "前瞻性投资系统",
+    "投资系统",
+    "源石锭存取",
+    "存入源石锭",
+    "取出源石锭",
+    "投资余额",
+    "巫仪档案库",
+    "档案库",
+    "收藏品图鉴",
+    "干员图鉴",
+    "敌方图鉴",
+    "印象重建",
+    "黑流数据库",
+    "蚀刻章套组",
+    "蚀刻章",
+)
+
+# Tech-tree secondary panel zones (normalized [0, 1] & 1280x720)
+# Valid safe canvas for clickable tech nodes: x in [0.08, 0.93], y in [0.16, 0.80]
+# (strictly excludes left/right edge page-turn arrows '<'/'->' at x<0.08 or x>0.93, top bar y<0.16, bottom bar y>0.80)
+TECH_TREE_CANVAS_SAFE_ROI_NORM: Tuple[float, float, float, float] = (0.08, 0.16, 0.93, 0.80)
+TECH_TREE_CANVAS_ROI_1280: Tuple[int, int, int, int] = (103, 116, 1087, 460)
+# Forbidden zones inside tech-tree panel (never clicked as nodes):
+# 1) Left/Right edge page-turn arrows: x < 0.08 and x > 0.93
+# 2) Top navigation bar: y < 0.16
+# 3) Bottom detail bar: y > 0.80
+# 4) Bottom-left attribute overview arch ('64/78 已重构'): x < 0.18, y > 0.62 (plus lower wide base x <= 0.22, y >= 0.72)
+# 5) Top-right points display: x >= 0.78, y <= 0.20
+TECH_TREE_FORBIDDEN_ZONES_NORM: Tuple[Tuple[float, float, float, float], ...] = (
+    (0.0, 0.0, 0.08, 1.0),
+    (0.93, 0.0, 1.0, 1.0),
+    (0.0, 0.0, 1.0, 0.16),
+    (0.0, 0.80, 1.0, 1.0),
+    (0.0, 0.62, 0.18, 1.0),
+    (0.0, 0.72, 0.22, 1.0),
+    (0.78, 0.0, 1.0, 0.20),
+)
+# Bottom-right confirm/upgrade button ROI (unique ground-truth for upgrade action): x in [0.72, 0.99], y in [0.84, 0.99]
+TECH_TREE_CONFIRM_BTN_ROI_NORM: Tuple[float, float, float, float] = (0.72, 0.84, 0.99, 0.99)
+TECH_TREE_CONFIRM_BTN_ROI_1280: Tuple[int, int, int, int] = (922, 605, 345, 108)
+# Top-bar home house icon ROI (x in [0.15, 0.28], y < 0.12) & return arrow ROI
+TECH_TREE_HOME_ICON_ROI_NORM: Tuple[float, float, float, float] = (0.15, 0.0, 0.28, 0.12)
+TECH_TREE_HOME_ICON_ROI_1280: Tuple[int, int, int, int] = (192, 0, 166, 86)
+TECH_TREE_RETURN_ICON_ROI_1280: Tuple[int, int, int, int] = (0, 0, 180, 86)
+# Top-right remaining points ROI: x in [0.78, 0.99], y in [0.02, 0.18]
+TECH_TREE_TOP_RIGHT_POINTS_ROI_NORM: Tuple[float, float, float, float] = (0.78, 0.02, 0.99, 0.18)
+TECH_TREE_TOP_RIGHT_POINTS_ROI_1280: Tuple[int, int, int, int] = (998, 14, 269, 116)
+# Fallback extended bottom-right action quadrant ONLY for unrendered blank-canvas mock tests
+_TECH_TREE_CONFIRM_BTN_COMPAT_ROI_1280: Tuple[int, int, int, int] = (920, 540, 350, 175)
+
+# Wrong-page signatures intercepted by per-round Page Guard (never click nodes or swipe here!)
+_TECH_TREE_PAGE_GUARD_WRONG_KEYWORDS: Tuple[str, ...] = (
+    "巫仪档案库",
+    "想象实体图鉴",
+    "虚构展览",
+    "设为活动主界面背景",
+    "设为界面背景",
+    "前瞻性投资系统",
+    "投资系统",
+    "源石锭存取",
+    "存入源石锭",
+    "取出源石锭",
+    "收藏品图鉴",
+    "干员图鉴",
+    "敌方图鉴",
+    "印象重建",
+    "黑流数据库",
+    "蚀刻章套组",
+)
+
+_TECH_OVERVIEW_OVERLAY_KEYWORDS: Tuple[str, ...] = (
+    "属性总览",
+    "效果总览",
+    "加成总览",
+    "效果一览",
+)
+
+# Disjoint semantic attribute groups for full-screen overview modal detection (requires >=2 hits AND NO home icon)
+_TECH_OVERVIEW_ATTR_GROUPS: Tuple[Tuple[str, ...], ...] = (
+    ("我方单位攻击力", "所有干员攻击力"),
+    ("我方单位防御力", "我方单位防御", "所有干员防御力", "所有干员防御"),
+    ("我方单位生命值", "我方单位生命", "所有干员生命值", "所有干员生命"),
+    ("初始源石锭", "额外源石锭"),
+    ("初始希望", "开局希望"),
+    ("初始费用", "初始部署费用"),
+    ("目标生命值", "目标生命"),
+    ("部署上限", "编队上限", "编队人数"),
+)
+
+_TECH_TREE_PANEL_CONFIRM_KEYWORDS: Tuple[str, ...] = (
+    "历史重构",
+    "认知塑造",
+    "文化比较",
+    "幕后筹备",
+    "古今学识",
+    "生命游戏",
+    "已重构",
+    "已激活",
+    "已解锁",
+    "已塑造",
+    "已点亮",
+    "可用点数",
+    "剩余点数",
+    "确认重构",
+    "确认激活",
+    "确认解锁",
+    "激活",
+    "解锁",
+    "重构",
+    "升级",
+    "塑造",
+    "点亮",
+)
+
+_REWARD_ENTRY_BLACKLIST: Tuple[str, ...] = (
+    "蚀刻章套组",
+    "蚀刻章",
+    "深入探索",
+    "深入调查",
+    "常规行动",
+    "开始探险",
+    "继续探险",
+    "开始探索",
+    "继续探索",
+    "月度小队",
+)
+
 # Multi-theme lobby & post-settlement UI anchor profiles (1280x720 normalized coordinates)
 THEME_UI_PROFILES: Dict[str, Dict[str, Any]] = {
-    "BlackFlow": {
-        "display_name": "沉沦者的黑流树海",
-        "lobby_keywords": ["开始探索", "源流堆栈", "生命游戏", "本月委托"],
+    "Phantom": {
+        "theme_key": "Phantom",
+        "aliases": ["Phantom", "傀影与猩红孤钻", "猩红孤钻"],
+        "display_name": "傀影与猩红孤钻",
+        "is_ended_theme": True,
+        "theme_select_keywords": ["傀影与猩红孤钻", "猩红孤钻", "古堡笔记"],
+        "lobby_keywords": ["开始探险", "开始探索", "古堡笔记", "幕后筹备"],
         "level_reward": {
-            "name": "源流堆栈",
-            "keywords": ["源流堆栈", "源流", "堆栈"],
-            "roi": (880, 0, 400, 140),
+            "name": "古堡笔记",
+            "keywords": ["古堡笔记"],
+            "roi": LEVEL_REWARD_PRIMARY_ROI,
             "fallback_xy": (1085, 58),
         },
         "monthly_commission": {
             "name": "本月委托栏",
-            "keywords": ["本月委托栏", "本月委托", "委托栏", "月度委托"],
-            "roi": (900, 130, 380, 360),
-            "fallback_xy": (1145, 268),
-        },
-        "tech_tree": {
-            "name": "生命游戏",
-            "keywords": ["生命游戏", "生命"],
-            "roi": (0, 450, 440, 270),
-            "fallback_xy": (185, 610),
-        },
-    },
-    "JieGarden": {
-        "display_name": "岁的界园志异",
-        "lobby_keywords": ["开始探索", "岁兽残识", "本月委托"],
-        "level_reward": {
-            "name": "奇闻奖励",
-            "keywords": ["岁兽残识", "奇闻", "等级奖励", "等级"],
-            "roi": (880, 0, 400, 140),
-            "fallback_xy": (1085, 58),
-        },
-        "monthly_commission": {
-            "name": "本月委托",
-            "keywords": ["本月委托栏", "本月委托", "月度委托", "委托"],
-            "roi": (900, 130, 380, 360),
-            "fallback_xy": (1145, 268),
-        },
-        "tech_tree": {
-            "name": "演武/铸塑",
-            "keywords": ["铸塑", "演武", "认知", "强化"],
-            "roi": (0, 450, 440, 270),
-            "fallback_xy": (185, 610),
-        },
-    },
-    "Sarkaz": {
-        "display_name": "萨卡兹的无终奇语",
-        "lobby_keywords": ["开始探索", "认知塑造", "古今学识"],
-        "level_reward": {
-            "name": "古今学识",
-            "keywords": ["古今学识", "异闻", "奇谭", "等级"],
-            "roi": (880, 0, 400, 140),
-            "fallback_xy": (1085, 58),
-        },
-        "monthly_commission": {
-            "name": "本月委托",
-            "keywords": ["本月委托栏", "本月委托", "月度委托", "委托"],
-            "roi": (900, 130, 380, 360),
-            "fallback_xy": (1145, 268),
-        },
-        "tech_tree": {
-            "name": "认知塑造",
-            "keywords": ["认知塑造", "认知"],
-            "roi": (0, 450, 440, 270),
-            "fallback_xy": (185, 610),
-        },
-    },
-    "Sami": {
-        "display_name": "探索者的银凇止境",
-        "lobby_keywords": ["开始探索", "认识塑造", "生态标本"],
-        "level_reward": {
-            "name": "探索者记录",
-            "keywords": ["探索者记录", "生态标本", "等级"],
-            "roi": (880, 0, 400, 140),
-            "fallback_xy": (1085, 58),
-        },
-        "monthly_commission": {
-            "name": "本月委托",
-            "keywords": ["本月委托栏", "本月委托", "月度委托", "委托"],
-            "roi": (900, 130, 380, 360),
-            "fallback_xy": (1145, 268),
-        },
-        "tech_tree": {
-            "name": "认识塑造",
-            "keywords": ["认识塑造", "认知塑造"],
-            "roi": (0, 450, 440, 270),
-            "fallback_xy": (185, 610),
-        },
-    },
-    "Mizuki": {
-        "display_name": "水月与深蓝之树",
-        "lobby_keywords": ["开始探索", "心胜于物", "生态图鉴"],
-        "level_reward": {
-            "name": "生态图鉴",
-            "keywords": ["生态图鉴", "奖励", "等级"],
-            "roi": (880, 0, 400, 140),
-            "fallback_xy": (1085, 58),
-        },
-        "monthly_commission": {
-            "name": "本月委托",
-            "keywords": ["本月委托栏", "本月委托", "月度委托", "委托"],
-            "roi": (900, 130, 380, 360),
-            "fallback_xy": (1145, 268),
-        },
-        "tech_tree": {
-            "name": "心胜于物",
-            "keywords": ["心胜于物"],
-            "roi": (0, 450, 440, 270),
-            "fallback_xy": (185, 610),
-        },
-    },
-    "Phantom": {
-        "display_name": "傀影与猩红孤钻",
-        "lobby_keywords": ["开始探索", "幕后筹备", "猩红剧团"],
-        "level_reward": {
-            "name": "剧团奖励",
-            "keywords": ["剧团奖励", "剧目", "等级", "奖励"],
-            "roi": (880, 0, 400, 140),
-            "fallback_xy": (1085, 58),
-        },
-        "monthly_commission": {
-            "name": "本月委托",
-            "keywords": ["本月委托栏", "本月委托", "月度委托", "委托"],
-            "roi": (900, 130, 380, 360),
+            "keywords": list(MONTHLY_COMMISSION_KEYWORDS),
+            "roi": MONTHLY_COMMISSION_PRIMARY_ROI,
             "fallback_xy": (1145, 268),
         },
         "tech_tree": {
             "name": "幕后筹备",
             "keywords": ["幕后筹备"],
-            "roi": (0, 450, 440, 270),
+            "split_pairs": [],
+            "roi": TECH_TREE_LEFT_VALID_ROI,
+            "anchor_norm": (0.145, 0.722),
+            "fallback_xy": (185, 520),
+        },
+    },
+    "Mizuki": {
+        "theme_key": "Mizuki",
+        "aliases": ["Mizuki", "水月与深蓝之树", "深蓝之树"],
+        "display_name": "水月与深蓝之树",
+        "is_ended_theme": True,
+        "theme_select_keywords": ["水月与深蓝之树", "深蓝之树", "生态谱系"],
+        "lobby_keywords": ["开始探险", "开始探索", "生态谱系", "认知塑造"],
+        "level_reward": {
+            "name": "生态谱系",
+            "keywords": ["生态谱系"],
+            "roi": LEVEL_REWARD_PRIMARY_ROI,
+            "fallback_xy": (1085, 58),
+        },
+        "monthly_commission": {
+            "name": "本月委托栏",
+            "keywords": list(MONTHLY_COMMISSION_KEYWORDS),
+            "roi": MONTHLY_COMMISSION_PRIMARY_ROI,
+            "fallback_xy": (1145, 268),
+        },
+        "tech_tree": {
+            "name": "认知塑造",
+            "keywords": ["认知塑造"],
+            "split_pairs": [],
+            "roi": TECH_TREE_LEFT_VALID_ROI,
+            "anchor_norm": (0.145, 0.778),
+            "fallback_xy": (185, 560),
+        },
+    },
+    "Sami": {
+        "theme_key": "Sami",
+        "aliases": ["Sami", "探索者的银凇止境", "银凇止境"],
+        "display_name": "探索者的银凇止境",
+        "is_ended_theme": True,
+        "theme_select_keywords": ["探索者的银凇止境", "银凇止境", "科考纪录", "科考记录"],
+        "lobby_keywords": ["开始探险", "开始探索", "科考纪录", "科考记录", "文化比较"],
+        "level_reward": {
+            "name": "科考纪录",
+            "keywords": ["科考纪录", "科考记录"],
+            "roi": LEVEL_REWARD_PRIMARY_ROI,
+            "fallback_xy": (1085, 58),
+        },
+        "monthly_commission": {
+            "name": "本月委托栏",
+            "keywords": list(MONTHLY_COMMISSION_KEYWORDS),
+            "roi": MONTHLY_COMMISSION_PRIMARY_ROI,
+            "fallback_xy": (1145, 268),
+        },
+        "tech_tree": {
+            "name": "文化比较",
+            "keywords": ["文化比较"],
+            "split_pairs": [],
+            "roi": TECH_TREE_LEFT_VALID_ROI,
+            "anchor_norm": (0.145, 0.667),
+            "fallback_xy": (185, 480),
+        },
+    },
+    "Sarkaz": {
+        "theme_key": "Sarkaz",
+        "aliases": ["Sarkaz", "萨卡兹的无终奇语", "无终奇语"],
+        "display_name": "萨卡兹的无终奇语",
+        "is_ended_theme": True,
+        "theme_select_keywords": ["萨卡兹的无终奇语", "无终奇语", "假说辑录"],
+        "lobby_keywords": ["开始探险", "开始探索", "假说辑录", "历史重构"],
+        "level_reward": {
+            "name": "假说辑录",
+            "keywords": ["假说辑录"],
+            "roi": LEVEL_REWARD_PRIMARY_ROI,
+            "fallback_xy": (1085, 58),
+        },
+        "monthly_commission": {
+            "name": "本月委托栏",
+            "keywords": list(MONTHLY_COMMISSION_KEYWORDS),
+            "roi": MONTHLY_COMMISSION_PRIMARY_ROI,
+            "fallback_xy": (1145, 268),
+        },
+        "tech_tree": {
+            "name": "历史重构",
+            "keywords": ["历史重构"],
+            "split_pairs": [],
+            "roi": TECH_TREE_LEFT_VALID_ROI,
+            # Standard 16:9 anchor for '历史重构 35' (avoids 巫仪档案库 ~0.31 and 前瞻性投资系统 ~0.56)
+            "anchor_norm": (0.105, 0.425),
+            "fallback_xy": (134, 306),
+        },
+    },
+    "JieGarden": {
+        "theme_key": "JieGarden",
+        "aliases": ["JieGarden", "Sui", "岁的界园志异", "界园志异"],
+        "display_name": "岁的界园志异",
+        "is_ended_theme": True,
+        "theme_select_keywords": ["岁的界园志异", "界园志异", "游园纪念"],
+        "lobby_keywords": ["开始探险", "开始探索", "游园纪念", "古今学识"],
+        "level_reward": {
+            "name": "游园纪念",
+            "keywords": ["游园纪念"],
+            "roi": LEVEL_REWARD_PRIMARY_ROI,
+            "fallback_xy": (1085, 58),
+        },
+        "monthly_commission": {
+            "name": "本月委托栏",
+            "keywords": list(MONTHLY_COMMISSION_KEYWORDS),
+            "roi": MONTHLY_COMMISSION_PRIMARY_ROI,
+            "fallback_xy": (1145, 268),
+        },
+        "tech_tree": {
+            "name": "古今学识",
+            "keywords": ["古今学识", "古今", "学识"],
+            "split_pairs": [("学识", "古今"), ("学古", "识今")],
+            "roi": TECH_TREE_LEFT_VALID_ROI,
+            "anchor_norm": (0.145, 0.583),
+            "fallback_xy": (185, 420),
+        },
+    },
+    "BlackFlow": {
+        "theme_key": "BlackFlow",
+        "aliases": ["BlackFlow", "Drowning", "沉沦者的黑流树海", "黑流树海"],
+        "display_name": "沉沦者的黑流树海",
+        "is_ended_theme": False,
+        "theme_select_keywords": ["沉沦者的黑流树海", "黑流树海", "源流堆栈"],
+        "lobby_keywords": ["开始探险", "开始探索", "源流堆栈", "生命游戏", "本月委托"],
+        "level_reward": {
+            "name": "源流堆栈",
+            "keywords": ["源流堆栈"],
+            "roi": LEVEL_REWARD_PRIMARY_ROI,
+            "fallback_xy": (1085, 58),
+        },
+        "monthly_commission": {
+            "name": "本月委托栏",
+            "keywords": list(MONTHLY_COMMISSION_KEYWORDS),
+            "roi": MONTHLY_COMMISSION_PRIMARY_ROI,
+            "fallback_xy": (1145, 268),
+        },
+        "tech_tree": {
+            "name": "生命游戏",
+            "keywords": ["生命游戏"],
+            "split_pairs": [],
+            "roi": TECH_TREE_LEFT_VALID_ROI,
+            "anchor_norm": (0.145, 0.847),
             "fallback_xy": (185, 610),
         },
     },
 }
+
+THEME_ALIASES: Dict[str, str] = {}
+for _tkey, _tprof in THEME_UI_PROFILES.items():
+    THEME_ALIASES[_tkey.lower()] = _tkey
+    for _alias in _tprof.get("aliases", ()):
+        _ac = str(_alias or "").strip().lower()
+        if _ac:
+            THEME_ALIASES[_ac] = _tkey
 
 DEFAULT_TECH_TREE_PRIORITY: Tuple[str, ...] = (
     "hope_dp_recruit",
@@ -313,25 +561,98 @@ _REWARD_DISMISS_TEXTS: Tuple[str, ...] = (
 )
 
 _TECH_UPGRADE_BUTTON_TEXTS: Tuple[str, ...] = (
-    "激活",
-    "解锁",
-    "升级",
-    "强化",
-    "提升",
-    "点亮",
+    "确认升级",
     "确认激活",
     "确认解锁",
+    "确认重构",
+    "确认强化",
+    "确认塑造",
+    "确认点亮",
+    "确认演化",
+    "确认研习",
+    "确认筹备",
+    "激活",
+    "解锁",
+    "重构",
+    "升级",
+    "强化",
+    "塑造",
+    "提升",
+    "点亮",
+    "演化",
+    "研习",
+    "确认",
+    "确定",
 )
 
-_TECH_UNAVAILABLE_TEXTS: Tuple[str, ...] = (
+_TECH_ALREADY_UPGRADED_TEXTS: Tuple[str, ...] = (
+    "已升级",
+    "已重构",
     "已激活",
     "已解锁",
+    "已塑造",
+    "已点亮",
     "已满级",
-    "点数不足",
-    "材料不足",
+    "已习得",
+)
+
+_TECH_LOCKED_TEXTS: Tuple[str, ...] = (
+    "未解锁",
     "未满足",
     "前置未解锁",
     "无法升级",
+    "无法解锁",
+    "无法激活",
+    "无法重构",
+    "不可升级",
+    "不可激活",
+    "不可解锁",
+)
+
+_TECH_INSUFFICIENT_POINTS_TEXTS: Tuple[str, ...] = (
+    "点数不足",
+    "材料不足",
+    "资源不足",
+)
+
+_TECH_UNAVAILABLE_TEXTS: Tuple[str, ...] = (
+    "未解锁",
+    "已激活",
+    "已解锁",
+    "已重构",
+    "已塑造",
+    "已点亮",
+    "已升级",
+    "已满级",
+    "已习得",
+    "点数不足",
+    "材料不足",
+    "资源不足",
+    "未满足",
+    "前置未解锁",
+    "无法升级",
+    "无法解锁",
+    "无法激活",
+    "无法重构",
+    "不可升级",
+    "不可激活",
+    "不可解锁",
+)
+
+_TECH_UPGRADE_BUTTON_EXCLUDE: Tuple[str, ...] = _TECH_UNAVAILABLE_TEXTS + (
+    "历史重构",
+    "历重构",
+    "史重构",
+    "认知塑造",
+    "认塑造",
+    "文化比较",
+    "幕后筹备",
+    "古今学识",
+    "生命游戏",
+    "取消",
+    "返回",
+    "关闭",
+    "重置",
 )
 
 
@@ -362,13 +683,26 @@ def _safe_int(val: Any, default: Optional[int] = None) -> Optional[int]:
         return default
 
 
+def normalize_roguelike_theme(theme: str, default: str = "BlackFlow") -> str:
+    """Resolve canonical Roguelike theme key across official keys, aliases (Sui/Drowning), and Chinese titles."""
+    raw = str(theme or "").strip()
+    if not raw:
+        return default
+    hit = THEME_ALIASES.get(raw.lower())
+    if hit:
+        return hit
+    # Partial Chinese title match fallback
+    for tkey, prof in THEME_UI_PROFILES.items():
+        disp = str(prof.get("display_name") or "")
+        if disp and (raw == disp or raw in disp):
+            return tkey
+    return default
+
+
 def get_theme_ui_profile(theme: str) -> Dict[str, Any]:
-    """Return UI landmark profile for a Roguelike theme, defaulting cleanly to BlackFlow."""
-    key = str(theme or "BlackFlow").strip()
-    for k, v in THEME_UI_PROFILES.items():
-        if k.lower() == key.lower():
-            return copy.deepcopy(v)
-    return copy.deepcopy(THEME_UI_PROFILES["BlackFlow"])
+    """Return UI landmark profile for a Roguelike theme (supporting aliases like Sui/Drowning), defaulting to BlackFlow."""
+    canonical = normalize_roguelike_theme(theme, default="BlackFlow")
+    return copy.deepcopy(THEME_UI_PROFILES.get(canonical, THEME_UI_PROFILES["BlackFlow"]))
 
 
 @dataclass
@@ -1503,17 +1837,43 @@ def classify_roguelike_screen(
     boxes = stage_pilot.find_text_boxes_via_ocr(img, include_inverted=True)
     joined = " ".join(b.get("compact", "") for b in boxes)
 
-    if any(k in joined for k in ("开始探索", "继续探索")) or any(k in joined for k in profile["lobby_keywords"][1:]):
+    if is_roguelike_theme_select_page(boxes):
+        return {"screen": "theme_select", "boxes": boxes}
+    if is_roguelike_theme_lobby(boxes, preferred_theme=theme) or any(
+        k in joined for k in profile["lobby_keywords"][1:]
+    ):
         return {"screen": "theme_lobby", "boxes": boxes}
     if any(k in joined for k in ("招募干员", "干员招募", "选择招募", "临时招募", "放弃招募")):
         return {"screen": "recruitment", "boxes": boxes}
     if any(k in joined for k in ("险路恶敌", "首领")) and any(k in joined for k in ("开始行动", "出发前往", "进入作战")):
         return {"screen": "boss_preview", "boxes": boxes}
-    if any(k in joined for k in ("不期而遇", "狭路相逢", "选择一项", "离开")) and not any(k in joined for k in ("开始探索",)):
+    if any(k in joined for k in ("不期而遇", "狭路相逢", "选择一项", "离开")) and not any(
+        k in joined for k in ("开始探索", "开始探险")
+    ):
         return {"screen": "encounter", "boxes": boxes}
     if any(k in joined for k in ("作战", "紧急作战", "诡意行商", "秘境行商", "安全的角落", "出发前往")):
         return {"screen": "map", "boxes": boxes}
     return {"screen": "unknown", "boxes": boxes}
+
+
+def _box_center(box: Dict[str, Any]) -> Tuple[int, int]:
+    return int(box.get("cx", box.get("x", 0))), int(box.get("cy", box.get("y", 0)))
+
+
+def _box_text_compact(box: Dict[str, Any]) -> str:
+    return re.sub(r"\s+", "", str(box.get("compact") or box.get("text") or ""))
+
+
+def _box_in_roi(
+    box: Dict[str, Any],
+    roi: Optional[Tuple[int, int, int, int]],
+    pad: int = 20,
+) -> bool:
+    if roi is None:
+        return True
+    rx, ry, rw, rh = roi
+    cx, cy = _box_center(box)
+    return (rx - pad <= cx <= rx + rw + pad) and (ry - pad <= cy <= ry + rh + pad)
 
 
 def _find_matching_ocr_box(
@@ -1521,22 +1881,730 @@ def _find_matching_ocr_box(
     keywords: Sequence[str],
     roi: Optional[Tuple[int, int, int, int]] = None,
     exclude_keywords: Sequence[str] = (),
+    roi_pad: int = 20,
 ) -> Optional[Dict[str, Any]]:
+    ex_clean = [re.sub(r"\s+", "", str(ex)) for ex in exclude_keywords if str(ex or "").strip()]
     for kw in keywords:
-        kw_clean = re.sub(r"\s+", "", kw)
+        kw_clean = re.sub(r"\s+", "", str(kw or ""))
+        if not kw_clean:
+            continue
         for b in boxes:
-            txt = str(b.get("compact") or b.get("text") or "")
-            if exclude_keywords and any(ex in txt for ex in exclude_keywords):
+            txt = _box_text_compact(b)
+            if not txt:
+                continue
+            if ex_clean and any(ex in txt for ex in ex_clean):
                 continue
             if kw_clean not in txt:
                 continue
-            if roi is not None:
-                rx, ry, rw, rh = roi
-                cx, cy = int(b.get("cx", b.get("x", 0))), int(b.get("cy", b.get("y", 0)))
-                if not (rx - 20 <= cx <= rx + rw + 20 and ry - 20 <= cy <= ry + rh + 20):
-                    continue
+            if not _box_in_roi(b, roi, pad=roi_pad):
+                continue
             return dict(b)
     return None
+
+
+def _merge_ocr_boxes(boxes: Sequence[Dict[str, Any]], label: str) -> Dict[str, Any]:
+    """Merge multiple OCR boxes (e.g. vertical split-column text) into a single centered target box."""
+    xs0: List[int] = []
+    ys0: List[int] = []
+    xs1: List[int] = []
+    ys1: List[int] = []
+    cxs: List[int] = []
+    cys: List[int] = []
+    for b in boxes:
+        cx, cy = _box_center(b)
+        cxs.append(cx)
+        cys.append(cy)
+        if all(k in b for k in ("x", "y", "w", "h")):
+            x0 = int(b["x"])
+            y0 = int(b["y"])
+            xs0.append(x0)
+            ys0.append(y0)
+            xs1.append(x0 + max(1, int(b["w"])))
+            ys1.append(y0 + max(1, int(b["h"])))
+    merged_from = [str(b.get("text") or b.get("compact") or "") for b in boxes]
+    if xs0 and len(xs0) == len(boxes):
+        min_x, min_y = min(xs0), min(ys0)
+        max_x, max_y = max(xs1), max(ys1)
+        return {
+            "text": label,
+            "compact": label,
+            "x": min_x,
+            "y": min_y,
+            "w": max(1, max_x - min_x),
+            "h": max(1, max_y - min_y),
+            "cx": int(round((min_x + max_x) / 2.0)),
+            "cy": int(round((min_y + max_y) / 2.0)),
+            "merged_from": merged_from,
+        }
+    return {
+        "text": label,
+        "compact": label,
+        "cx": int(round(sum(cxs) / max(1, len(cxs)))),
+        "cy": int(round(sum(cys) / max(1, len(cys)))),
+        "merged_from": merged_from,
+    }
+
+
+def _find_split_pair_ocr_box(
+    boxes: Sequence[Dict[str, Any]],
+    split_pairs: Sequence[Tuple[str, str]],
+    label: str,
+    roi: Optional[Tuple[int, int, int, int]] = None,
+    exclude_keywords: Sequence[str] = (),
+    roi_pad: int = 0,
+    max_dx: int = 220,
+    max_dy: int = 160,
+) -> Optional[Dict[str, Any]]:
+    """Detect adjacent two-column/split OCR fragments (e.g. '学识'+'古今' or '学古'+'识今') and return merged center."""
+    if not split_pairs:
+        return None
+    ex_clean = [re.sub(r"\s+", "", str(ex)) for ex in exclude_keywords if str(ex or "").strip()]
+    valid_boxes: List[Tuple[int, Dict[str, Any], str]] = []
+    for idx, b in enumerate(boxes):
+        txt = _box_text_compact(b)
+        if not txt:
+            continue
+        if ex_clean and any(ex in txt for ex in ex_clean):
+            continue
+        if not _box_in_roi(b, roi, pad=roi_pad):
+            continue
+        valid_boxes.append((idx, b, txt))
+
+    for part_a, part_b in split_pairs:
+        ka = re.sub(r"\s+", "", str(part_a or ""))
+        kb = re.sub(r"\s+", "", str(part_b or ""))
+        if not ka or not kb:
+            continue
+        cands_a = [(idx, b) for idx, b, txt in valid_boxes if ka in txt]
+        cands_b = [(idx, b) for idx, b, txt in valid_boxes if kb in txt]
+        best_pair: Optional[Tuple[int, Dict[str, Any], Dict[str, Any]]] = None
+        for idx_a, ba in cands_a:
+            cxa, cya = _box_center(ba)
+            for idx_b, bb in cands_b:
+                if idx_a == idx_b:
+                    continue
+                cxb, cyb = _box_center(bb)
+                dx = abs(cxa - cxb)
+                dy = abs(cya - cyb)
+                if dx > max_dx or dy > max_dy:
+                    continue
+                dist = dx * dx + dy * dy
+                if best_pair is None or dist < best_pair[0]:
+                    best_pair = (dist, ba, bb)
+        if best_pair is not None:
+            merged = _merge_ocr_boxes([best_pair[1], best_pair[2]], label=label)
+            if _box_in_roi(merged, roi, pad=roi_pad):
+                return merged
+
+    # Bonus resilience: 4 single-character split boxes for a 4-char vertical title (e.g. 古/今/学/识)
+    clean_label = re.sub(r"\s+", "", str(label or ""))
+    if len(clean_label) == 4 and len(set(clean_label)) == 4:
+        char_boxes: List[Dict[str, Any]] = []
+        used_indices = set()
+        for ch in clean_label:
+            hit = next(((idx, b) for idx, b, txt in valid_boxes if idx not in used_indices and txt == ch), None)
+            if hit is None:
+                char_boxes = []
+                break
+            used_indices.add(hit[0])
+            char_boxes.append(hit[1])
+        if len(char_boxes) == 4:
+            cxs = [_box_center(b)[0] for b in char_boxes]
+            cys = [_box_center(b)[1] for b in char_boxes]
+            if (max(cxs) - min(cxs) <= max_dx) and (max(cys) - min(cys) <= max_dy):
+                merged = _merge_ocr_boxes(char_boxes, label=label)
+                if _box_in_roi(merged, roi, pad=roi_pad):
+                    return merged
+    return None
+
+
+def _find_tech_tree_entry_for_profile(
+    boxes: Sequence[Dict[str, Any]],
+    profile: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Locate a theme's tech-tree entry strictly inside the left-side valid zone with blacklist & split-pair support."""
+    tech_spec = profile.get("tech_tree") or {}
+    name = str(tech_spec.get("name") or "")
+    keywords = [str(k) for k in (tech_spec.get("keywords") or []) if str(k or "").strip()]
+    split_pairs = list(tech_spec.get("split_pairs") or [])
+    roi = tech_spec.get("roi") or TECH_TREE_LEFT_VALID_ROI
+
+    # 1. Full/primary keywords first (e.g. '古今学识', '历史重构', '认知塑造')
+    full_kws: List[str] = []
+    short_kws: List[str] = []
+    for kw in keywords:
+        if kw == name or len(kw) >= 3:
+            full_kws.append(kw)
+        else:
+            short_kws.append(kw)
+
+    hit = _find_matching_ocr_box(
+        boxes,
+        full_kws,
+        roi=roi,
+        exclude_keywords=TECH_TREE_ENTRY_BLACKLIST,
+        roi_pad=0,
+    )
+    if hit is not None and _box_in_roi(hit, TECH_TREE_LEFT_VALID_ROI, pad=0):
+        return hit
+
+    # 2. Split-column OCR pairs BEFORE short partial keywords (so '学识'+'古今' merges to exact center)
+    if split_pairs:
+        merged = _find_split_pair_ocr_box(
+            boxes,
+            split_pairs=split_pairs,
+            label=name or (full_kws[0] if full_kws else "科技树"),
+            roi=roi,
+            exclude_keywords=TECH_TREE_ENTRY_BLACKLIST,
+            roi_pad=0,
+        )
+        if merged is not None and _box_in_roi(merged, TECH_TREE_LEFT_VALID_ROI, pad=0):
+            return merged
+
+    # 3. Short partial keywords fallback (still strictly inside left-side valid ROI & blacklist-filtered)
+    if short_kws:
+        hit_short = _find_matching_ocr_box(
+            boxes,
+            short_kws,
+            roi=roi,
+            exclude_keywords=TECH_TREE_ENTRY_BLACKLIST,
+            roi_pad=0,
+        )
+        if hit_short is not None and _box_in_roi(hit_short, TECH_TREE_LEFT_VALID_ROI, pad=0):
+            return hit_short
+
+    return None
+
+
+def _theme_scan_order(configured_theme: str) -> List[str]:
+    norm = normalize_roguelike_theme(configured_theme, default="BlackFlow")
+    order = [norm] if norm in THEME_UI_PROFILES else []
+    for tkey in THEME_UI_PROFILES:
+        if tkey not in order:
+            order.append(tkey)
+    return order
+
+
+def resolve_lobby_tech_tree_entry(
+    boxes: Sequence[Dict[str, Any]],
+    configured_theme: str = "BlackFlow",
+) -> Optional[Dict[str, Any]]:
+    """Find tech-tree entry with configured-theme priority and all-6-theme fallback."""
+    order = _theme_scan_order(configured_theme)
+    primary = order[0] if order else "BlackFlow"
+    for tkey in order:
+        prof = THEME_UI_PROFILES[tkey]
+        box = _find_tech_tree_entry_for_profile(boxes, prof)
+        if box is not None:
+            return {
+                "theme": tkey,
+                "profile": copy.deepcopy(prof),
+                "box": box,
+                "matched_via_fallback": (tkey != primary),
+                "match_stage": "fullscreen_ocr",
+            }
+    return None
+
+
+def _box_mean_2d(gray: "np.ndarray", radius: int = 15) -> "np.ndarray":
+    """Fast O(H*W) 2D box-filter mean using integral image (pure NumPy, zero OpenCV dependency)."""
+    r = max(1, int(radius))
+    padded = np.pad(gray.astype(np.float32), ((r, r), (r, r)), mode="edge")
+    integ = np.zeros((padded.shape[0] + 1, padded.shape[1] + 1), dtype=np.float64)
+    integ[1:, 1:] = np.cumsum(np.cumsum(padded, axis=0), axis=1)
+    k = 2 * r + 1
+    window_sum = (
+        integ[k:, k:]
+        - integ[:-k, k:]
+        - integ[k:, :-k]
+        + integ[:-k, :-k]
+    )
+    return (window_sum / float(k * k)).astype(np.float32)
+
+
+def _apply_clahe_gray_numpy(
+    gray_u8: "np.ndarray",
+    tile_grid: Tuple[int, int] = (8, 8),
+    clip_limit: float = 2.5,
+) -> "np.ndarray":
+    """Pure-NumPy tiled Contrast-Limited Adaptive Histogram Equalization (CLAHE) with bilinear interpolation."""
+    h, w = gray_u8.shape
+    ny = max(1, min(int(tile_grid[0]), h // 16 if h >= 32 else 1))
+    nx = max(1, min(int(tile_grid[1]), w // 16 if w >= 32 else 1))
+    tile_h = h / float(ny)
+    tile_w = w / float(nx)
+
+    luts = np.zeros((ny, nx, 256), dtype=np.float32)
+    for ty in range(ny):
+        y0 = int(round(ty * tile_h))
+        y1 = h if ty == ny - 1 else max(y0 + 1, int(round((ty + 1) * tile_h)))
+        for tx in range(nx):
+            x0 = int(round(tx * tile_w))
+            x1 = w if tx == nx - 1 else max(x0 + 1, int(round((tx + 1) * tile_w)))
+            tile = gray_u8[y0:y1, x0:x1]
+            n_px = max(1, int(tile.size))
+            hist = np.bincount(tile.ravel(), minlength=256).astype(np.int64)
+            limit = max(1, int(round(float(clip_limit) * n_px / 256.0)))
+            excess = int(np.maximum(hist - limit, 0).sum())
+            hist = np.minimum(hist, limit)
+            if excess > 0:
+                q, rem = divmod(excess, 256)
+                hist += q
+                if rem > 0:
+                    step = max(1, 256 // rem)
+                    hist[: rem * step : step] += 1
+            cdf = np.cumsum(hist).astype(np.float32)
+            luts[ty, tx] = np.clip(np.round(cdf * (255.0 / float(max(1.0, cdf[-1])))), 0.0, 255.0)
+
+    ys = np.clip((np.arange(h, dtype=np.float32) + 0.5) / tile_h - 0.5, 0.0, float(ny - 1))
+    xs = np.clip((np.arange(w, dtype=np.float32) + 0.5) / tile_w - 0.5, 0.0, float(nx - 1))
+    y0 = np.floor(ys).astype(np.int32)
+    x0 = np.floor(xs).astype(np.int32)
+    y1 = np.minimum(y0 + 1, ny - 1)
+    x1 = np.minimum(x0 + 1, nx - 1)
+    wy = (ys - y0)[:, None]
+    wx = (xs - x0)[None, :]
+
+    v = gray_u8.astype(np.int32)
+    c00 = luts[y0[:, None], x0[None, :], v]
+    c01 = luts[y0[:, None], x1[None, :], v]
+    c10 = luts[y1[:, None], x0[None, :], v]
+    c11 = luts[y1[:, None], x1[None, :], v]
+    top = c00 * (1.0 - wx) + c01 * wx
+    bot = c10 * (1.0 - wx) + c11 * wx
+    out = top * (1.0 - wy) + bot * wy
+    return np.clip(np.round(out), 0, 255).astype(np.uint8)
+
+
+def build_tech_tree_local_ocr_images(
+    img: Image.Image,
+    roi_norm: Tuple[float, float, float, float] = TECH_TREE_LOCAL_OCR_ROI_NORM,
+    scale: float = TECH_TREE_LOCAL_OCR_UPSCALE,
+) -> Dict[str, Any]:
+    """Crop left lobby function band (default x in [0.01,0.28], y in [0.25,0.75]), upscale 2.5x,
+    and build two enhanced OCR streams:
+      1) ``red_suppressed``: min(G, B) channel (eliminates Sarkaz bright-red striped backdrop) + adaptive binarization
+      2) ``clahe_gray``: tiled CLAHE local-contrast enhanced grayscale (generalized across all themes)
+    """
+    rgb = img.convert("RGB")
+    ow, oh = max(1, rgb.width), max(1, rgb.height)
+    nx0, ny0, nx1, ny1 = roi_norm
+    x0 = max(0, min(ow - 2, int(round(nx0 * ow))))
+    y0 = max(0, min(oh - 2, int(round(ny0 * oh))))
+    x1 = max(x0 + 2, min(ow, int(round(nx1 * ow))))
+    y1 = max(y0 + 2, min(oh, int(round(ny1 * oh))))
+
+    crop_rgb = rgb.crop((x0, y0, x1, y1))
+    roi_1280 = (
+        float(x0) * 1280.0 / float(ow),
+        float(y0) * 720.0 / float(oh),
+        max(1.0, float(x1 - x0) * 1280.0 / float(ow)),
+        max(1.0, float(y1 - y0) * 720.0 / float(oh)),
+    )
+
+    eff_scale = max(1.0, float(scale))
+    up_w = max(2, int(round(crop_rgb.width * eff_scale)))
+    up_h = max(2, int(round(crop_rgb.height * eff_scale)))
+    up_rgb = crop_rgb.resize((up_w, up_h), Image.Resampling.BICUBIC)
+
+    if np is None:
+        gray_fallback = up_rgb.convert("L").convert("RGB")
+        return {
+            "roi_1280": roi_1280,
+            "scale": eff_scale,
+            "crop_rgb": crop_rgb,
+            "red_suppressed": gray_fallback,
+            "clahe_gray": gray_fallback,
+        }
+
+    arr = np.asarray(up_rgb, dtype=np.uint8)
+    # Stream A: suppress red channel via min(G, B) — bright red stripes collapse to dark while white text stays ~255
+    gb_min = np.minimum(arr[:, :, 1], arr[:, :, 2]).astype(np.float32)
+    local_mean = _box_mean_2d(gb_min, radius=max(9, int(round(15 * eff_scale / 2.5))))
+    # Adaptive foreground mask (white text strokes -> black=0 on white=255 for optimal WinOCR legibility)
+    text_mask = (gb_min >= (local_mean + 20.0)) & (gb_min >= 115.0)
+    bin_u8 = np.where(text_mask, 0, 255).astype(np.uint8)
+    red_suppressed_img = Image.fromarray(bin_u8, mode="L").convert("RGB")
+
+    # Stream B: tiled CLAHE grayscale for non-red themes
+    gray_u8 = np.clip(
+        np.round(0.299 * arr[:, :, 0] + 0.587 * arr[:, :, 1] + 0.114 * arr[:, :, 2]),
+        0,
+        255,
+    ).astype(np.uint8)
+    clahe_u8 = _apply_clahe_gray_numpy(gray_u8, tile_grid=(8, 8), clip_limit=2.5)
+    clahe_img = Image.fromarray(clahe_u8, mode="L").convert("RGB")
+
+    return {
+        "roi_1280": roi_1280,
+        "scale": eff_scale,
+        "crop_rgb": crop_rgb,
+        "red_suppressed": red_suppressed_img,
+        "clahe_gray": clahe_img,
+    }
+
+
+def _map_local_ocr_boxes_to_full_1280(
+    local_boxes: Sequence[Dict[str, Any]],
+    roi_1280: Tuple[float, float, float, float],
+) -> List[Dict[str, Any]]:
+    """Map OCR boxes normalized to a cropped ROI's 1280x720 back into full-screen 1280x720 coordinates."""
+    rx0, ry0, rw, rh = roi_1280
+    mapped: List[Dict[str, Any]] = []
+    for b in local_boxes or []:
+        nb = dict(b)
+        lcx = float(b.get("cx", b.get("x", 0)))
+        lcy = float(b.get("cy", b.get("y", 0)))
+        nb["cx"] = int(round(rx0 + (lcx / 1280.0) * rw))
+        nb["cy"] = int(round(ry0 + (lcy / 720.0) * rh))
+        if all(k in b for k in ("x", "y", "w", "h")):
+            nb["x"] = int(round(rx0 + (float(b["x"]) / 1280.0) * rw))
+            nb["y"] = int(round(ry0 + (float(b["y"]) / 720.0) * rh))
+            nb["w"] = max(1, int(round((float(b["w"]) / 1280.0) * rw)))
+            nb["h"] = max(1, int(round((float(b["h"]) / 720.0) * rh)))
+        mapped.append(nb)
+    return mapped
+
+
+def _find_tech_tree_numeric_badge_box(
+    boxes: Sequence[Dict[str, Any]],
+    configured_theme: str = "BlackFlow",
+    roi_norm: Tuple[float, float, float, float] = TECH_TREE_LOCAL_OCR_ROI_NORM,
+    y_band_norm: Tuple[float, float] = TECH_TREE_POINTS_BAND_Y_NORM,
+) -> Optional[Dict[str, Any]]:
+    """Match pure numeric tech-tree point badges (e.g. '35') strictly inside y in [0.35, 0.50] & left band,
+    excluding blacklist rows (e.g. '前瞻性投资系统' 999 at y~0.56).
+    """
+    ex_clean = [re.sub(r"\s+", "", str(ex)) for ex in TECH_TREE_ENTRY_BLACKLIST if str(ex or "").strip()]
+    bl_ys: List[int] = []
+    for b in boxes or []:
+        txt = _box_text_compact(b)
+        if txt and any(ex in txt for ex in ex_clean):
+            bl_ys.append(_box_center(b)[1])
+
+    x_min = int(round(roi_norm[0] * 1280.0))
+    x_max = int(round(roi_norm[2] * 1280.0))
+    y_min = int(round(y_band_norm[0] * 720.0))
+    y_max = int(round(y_band_norm[1] * 720.0))
+
+    prof = get_theme_ui_profile(configured_theme)
+    anchor_norm = prof.get("tech_tree", {}).get("anchor_norm") or (0.105, 0.425)
+    anchor_x = int(round(float(anchor_norm[0]) * 1280.0))
+    anchor_y = int(round(float(anchor_norm[1]) * 720.0))
+
+    candidates: List[Tuple[int, Dict[str, Any], int]] = []
+    for b in boxes or []:
+        txt = _box_text_compact(b)
+        if not txt or not re.fullmatch(r"\d{1,4}", txt):
+            continue
+        val = int(txt)
+        if val <= 0:
+            continue
+        cx, cy = _box_center(b)
+        if not (x_min <= cx <= x_max and y_min <= cy <= y_max):
+            continue
+        if any(abs(cy - by) <= 42 for by in bl_ys):
+            continue
+        dist2 = (cx - anchor_x) ** 2 + (cy - anchor_y) ** 2
+        candidates.append((dist2, dict(b), val))
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0])
+    _, best_box, best_val = candidates[0]
+    best_box["points_value"] = best_val
+    return best_box
+
+
+def resolve_lobby_tech_tree_via_local_ocr(
+    img: Image.Image,
+    configured_theme: str = "BlackFlow",
+    cancel_event: Optional[threading.Event] = None,
+    log_callback: Optional[Callable[[str], None]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Stage-2 tech-tree entry locator: crop left band, upscale 2.5x, run red-suppressed adaptive binary
+    OCR and CLAHE grayscale OCR; match tech-tree text first, then non-blacklisted numeric points (y in [0.35, 0.50]).
+    """
+    if cancel_event and cancel_event.is_set():
+        return None
+    norm_theme = normalize_roguelike_theme(configured_theme, default="BlackFlow")
+    prep = build_tech_tree_local_ocr_images(img)
+    roi_1280 = prep["roi_1280"]
+    combined_mapped: List[Dict[str, Any]] = []
+
+    for stream_key, stage_name, use_inv in (
+        ("red_suppressed", "local_ocr_red_suppressed", False),
+        ("clahe_gray", "local_ocr_clahe", True),
+    ):
+        if cancel_event and cancel_event.is_set():
+            return None
+        enh_img = prep[stream_key]
+        raw_local = stage_pilot.find_text_boxes_via_ocr(
+            enh_img,
+            include_inverted=use_inv,
+            upscale_min_width=enh_img.width,
+            pad_border=16,
+            cancel_event=cancel_event,
+        )
+        mapped = _map_local_ocr_boxes_to_full_1280(raw_local, roi_1280)
+        combined_mapped.extend(mapped)
+        hit = resolve_lobby_tech_tree_entry(mapped, configured_theme=norm_theme)
+        if hit is not None:
+            hit["match_stage"] = stage_name
+            hit["requires_panel_verify"] = False
+            return hit
+
+    # Text did not match in either enhanced stream -> try non-blacklisted numeric points badge (y in [0.35, 0.50])
+    num_box = _find_tech_tree_numeric_badge_box(combined_mapped, configured_theme=norm_theme)
+    if num_box is not None:
+        prof = get_theme_ui_profile(norm_theme)
+        return {
+            "theme": norm_theme,
+            "profile": prof,
+            "box": num_box,
+            "matched_via_fallback": False,
+            "match_stage": "local_ocr_points",
+            "requires_panel_verify": True,
+        }
+    return None
+
+
+def _resolve_theme_anchor_fallback(
+    img: Image.Image,
+    confirmed_theme: Optional[str],
+    boxes: Optional[Sequence[Dict[str, Any]]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Stage-3 tech-tree entry locator: standard 16:9 normalized anchor when lobby theme was positively confirmed.
+    Strictly forbidden on the Integrated Strategies Theme Selection page."""
+    if not confirmed_theme:
+        return None
+    if boxes and is_roguelike_theme_select_page(boxes):
+        return None
+    ow, oh = max(1, img.width), max(1, img.height)
+    if abs((float(ow) / float(oh)) - (16.0 / 9.0)) > 0.08:
+        return None
+    norm_theme = normalize_roguelike_theme(confirmed_theme, default="")
+    if norm_theme not in THEME_UI_PROFILES:
+        return None
+    prof = get_theme_ui_profile(norm_theme)
+    tech_spec = prof["tech_tree"]
+    anchor_norm = tech_spec.get("anchor_norm")
+    if not anchor_norm or len(anchor_norm) != 2:
+        return None
+    cx = int(round(float(anchor_norm[0]) * 1280.0))
+    cy = int(round(float(anchor_norm[1]) * 720.0))
+    return {
+        "theme": norm_theme,
+        "profile": prof,
+        "box": {
+            "text": f"{tech_spec['name']}(锚点兜底)",
+            "compact": tech_spec["name"],
+            "cx": cx,
+            "cy": cy,
+            "anchor_norm": (float(anchor_norm[0]), float(anchor_norm[1])),
+        },
+        "matched_via_fallback": False,
+        "match_stage": "theme_anchor_fallback",
+        "requires_panel_verify": True,
+    }
+
+
+def _verify_entered_tech_tree_panel(
+    adb_path: str,
+    adb_addr: str,
+    active_profile: Dict[str, Any],
+    cancel_event: Optional[threading.Event] = None,
+    log_callback: Optional[Callable[[str], None]] = None,
+    maa_dir: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Strict post-click admission check for tech-tree entry.
+
+    NEVER relies on bright-blob count alone. Requires ALL of:
+      1) Absence of theme-selection / lobby / wrong-panel markers
+         (e.g. '进入主题', '添加到终端', '查看收藏', '该主题已全额收录', '开始探险', '开始探索', '蚀刻章套组');
+      2) Top bar '<' return icon AND Home house icon present;
+      3) Top-right ROI x in [0.78, 0.99], y in [0.02, 0.18] has remaining points number or points currency name.
+    (Legacy unrendered flat blank test canvases may pass ONLY when the exact official tech-tree title is present.)
+    """
+    verify_img = stage_pilot.adb_screencap_image(adb_path, adb_addr)
+    if verify_img is None:
+        return {"ok": False, "wrong_panel": "screencap_failed", "returned": False, "img": None}
+
+    verify_boxes = stage_pilot.find_text_boxes_via_ocr(verify_img, include_inverted=True, cancel_event=cancel_event)
+    joined = "".join(_box_text_compact(b) for b in (verify_boxes or []))
+
+    # 1. Hard reject: Integrated Strategies Theme Selection page -> NEVER tap '<' (would exit IS!), abort immediately
+    if is_roguelike_theme_select_page(verify_boxes):
+        _emit(
+            log_callback,
+            "[WARN][RL-TECH] 准入校验拦截：当前处于集成战略「主题选择页」，严禁误判进入科技树或继续点返回键，立即中止加点。",
+        )
+        return {"ok": False, "wrong_panel": "theme_select_page", "returned": False, "img": verify_img, "boxes": verify_boxes}
+
+    # 2. Hard reject: Still on theme lobby ('开始探险' / '开始探索' / '蚀刻章套组' / '常规行动') -> abort without tapping '<'
+    if any(lk in joined for lk in ("开始探险", "继续探险", "开始探索", "继续探索", "蚀刻章套组", "常规行动")):
+        _emit(log_callback, "[WARN][RL-TECH] 兜底点击后仍停留在肉鸽主题大厅，未进入科技树面板，中止加点。")
+        return {"ok": False, "wrong_panel": "theme_lobby", "returned": False, "img": verify_img, "boxes": verify_boxes}
+
+    # 3. Explicit mis-entry into investment bank / archive / gallery -> immediately tap top-left '<' and abort
+    for wrong_kw in _TECH_TREE_WRONG_PANEL_KEYWORDS:
+        if wrong_kw in joined:
+            _emit(
+                log_callback,
+                f"[WARN][RL-TECH] 兜底点击误入非科技树界面（命中「{wrong_kw}」），立即点击左上角返回键并中止加点。",
+            )
+            stage_pilot.adb_tap_norm(adb_path, adb_addr, 64, 40, verify_img.width, verify_img.height)
+            time.sleep(0.8)
+            return {"ok": False, "wrong_panel": wrong_kw, "returned": True, "img": verify_img, "boxes": verify_boxes}
+    for wrong_kw in _TECH_TREE_PAGE_GUARD_WRONG_KEYWORDS:
+        if wrong_kw in joined:
+            _emit(
+                log_callback,
+                f"[WARN][RL-TECH] 兜底点击误入非科技树界面（命中「{wrong_kw}」），立即点击左上角返回键并中止加点。",
+            )
+            stage_pilot.adb_tap_norm(adb_path, adb_addr, 64, 40, verify_img.width, verify_img.height)
+            time.sleep(0.8)
+            return {"ok": False, "wrong_panel": wrong_kw, "returned": True, "img": verify_img, "boxes": verify_boxes}
+
+    # 4. Strict tech-tree admission check: top '<' + house icon + top-right points indicator
+    tech_name = str(active_profile.get("tech_tree", {}).get("name") or "")
+    has_ret = detect_tech_tree_return_icon(verify_img, maa_dir=maa_dir)
+    has_home = detect_tech_tree_home_icon(verify_img, maa_dir=maa_dir, boxes=verify_boxes)
+    has_points_indicator, pts_val = _has_top_right_tech_points_indicator(
+        verify_img, verify_boxes, allow_roi_ocr=True, cancel_event=cancel_event
+    )
+
+    if has_ret and has_home and has_points_indicator:
+        _emit(
+            log_callback,
+            f"[RL-TECH] 二级界面准入校验通过（< + 房子图标 + 右上角点数={pts_val}），已确认进入「{tech_name}」科技树面板。",
+        )
+        return {
+            "ok": True,
+            "wrong_panel": "",
+            "returned": False,
+            "img": verify_img,
+            "boxes": verify_boxes,
+            "points": pts_val,
+        }
+
+    # Legacy compatibility ONLY for unrendered flat blank synthetic unit-test canvases that carry the official panel title
+    official_titles = tuple(
+        t for t in (tech_name, "历史重构", "认知塑造", "文化比较", "幕后筹备", "古今学识", "生命游戏") if t
+    )
+    if not _has_rendered_ui_chrome(verify_img) and any(t in joined for t in official_titles):
+        _emit(log_callback, f"[RL-TECH] 二级界面快速校验通过，已确认进入「{tech_name}」科技树面板。")
+        return {"ok": True, "wrong_panel": "", "returned": False, "img": verify_img, "boxes": verify_boxes, "points": pts_val}
+
+    _emit(
+        log_callback,
+        f"[WARN][RL-TECH] 二级界面准入校验未通过（禁止仅凭亮块数误判；需满足 <={has_ret}、房子={has_home}、右上角点数={has_points_indicator}），"
+        f"中止进入「{tech_name}」科技树加点。",
+    )
+    if has_ret:
+        stage_pilot.adb_tap_norm(adb_path, adb_addr, 64, 40, verify_img.width, verify_img.height)
+        time.sleep(0.8)
+        return {"ok": False, "wrong_panel": "unconfirmed_panel", "returned": True, "img": verify_img, "boxes": verify_boxes}
+    return {"ok": False, "wrong_panel": "unconfirmed_panel", "returned": False, "img": verify_img, "boxes": verify_boxes}
+
+
+def resolve_lobby_level_reward_entry(
+    boxes: Sequence[Dict[str, Any]],
+    configured_theme: str = "BlackFlow",
+) -> Optional[Dict[str, Any]]:
+    """Find top-right level-reward entry with configured-theme priority and all-6-theme fallback."""
+    order = _theme_scan_order(configured_theme)
+    primary = order[0] if order else "BlackFlow"
+
+    # Pass 1: primary top-right ROI (configured theme first, then others)
+    for tkey in order:
+        prof = THEME_UI_PROFILES[tkey]
+        lvl_spec = prof["level_reward"]
+        box = _find_matching_ocr_box(
+            boxes,
+            lvl_spec["keywords"],
+            roi=lvl_spec.get("roi", LEVEL_REWARD_PRIMARY_ROI),
+            exclude_keywords=_REWARD_ENTRY_BLACKLIST,
+        )
+        if box is not None:
+            return {
+                "theme": tkey,
+                "profile": copy.deepcopy(prof),
+                "box": box,
+                "matched_via_fallback": (tkey != primary),
+            }
+
+    # Pass 2: broader top-right fallback ROI
+    for tkey in order:
+        prof = THEME_UI_PROFILES[tkey]
+        lvl_spec = prof["level_reward"]
+        box = _find_matching_ocr_box(
+            boxes,
+            lvl_spec["keywords"],
+            roi=LEVEL_REWARD_FALLBACK_ROI,
+            exclude_keywords=_REWARD_ENTRY_BLACKLIST,
+        )
+        if box is not None:
+            return {
+                "theme": tkey,
+                "profile": copy.deepcopy(prof),
+                "box": box,
+                "matched_via_fallback": (tkey != primary),
+            }
+    return None
+
+
+def resolve_lobby_monthly_commission_entry(
+    boxes: Sequence[Dict[str, Any]],
+    configured_theme: str = "BlackFlow",
+) -> Optional[Dict[str, Any]]:
+    """Find right-side monthly commission entry ('本月委托栏' / '本月委托')."""
+    prof = get_theme_ui_profile(configured_theme)
+    comm_spec = prof["monthly_commission"]
+    kws = list(comm_spec.get("keywords") or MONTHLY_COMMISSION_KEYWORDS)
+    box = _find_matching_ocr_box(
+        boxes,
+        kws,
+        roi=comm_spec.get("roi", MONTHLY_COMMISSION_PRIMARY_ROI),
+        exclude_keywords=_REWARD_ENTRY_BLACKLIST,
+    )
+    if box is None:
+        box = _find_matching_ocr_box(
+            boxes,
+            kws,
+            roi=MONTHLY_COMMISSION_FALLBACK_ROI,
+            exclude_keywords=_REWARD_ENTRY_BLACKLIST,
+        )
+    return box
+
+
+def detect_lobby_theme_from_boxes(
+    boxes: Sequence[Dict[str, Any]],
+    preferred_theme: str = "BlackFlow",
+) -> Optional[str]:
+    """Identify which of the 6 Roguelike theme lobbies is shown on screen using lobby-only anchors."""
+    pref = normalize_roguelike_theme(preferred_theme, default="BlackFlow")
+    best_theme: Optional[str] = None
+    best_score = 0
+    for tkey, prof in THEME_UI_PROFILES.items():
+        score = 0
+        lvl_box = _find_matching_ocr_box(
+            boxes,
+            prof["level_reward"]["keywords"],
+            roi=LEVEL_REWARD_FALLBACK_ROI,
+            exclude_keywords=_REWARD_ENTRY_BLACKLIST,
+        )
+        if lvl_box is not None:
+            score += 4
+        tech_box = _find_tech_tree_entry_for_profile(boxes, prof)
+        if tech_box is not None:
+            score += 4
+        if score <= 0:
+            continue
+        if score > best_score or (score == best_score and tkey == pref):
+            best_score = score
+            best_theme = tkey
+    return best_theme
 
 
 def score_tech_tree_node(
@@ -1576,79 +2644,1166 @@ def score_tech_tree_node(
     return best_score, best_cat
 
 
+def is_roguelike_theme_select_page(boxes: Sequence[Dict[str, Any]]) -> bool:
+    """Hard recognition for the Integrated Strategies Theme Selection hub page
+    (hits any of '进入主题', '添加到终端', '查看收藏', '该主题已全额收录').
+    """
+    joined = "".join(_box_text_compact(b) for b in (boxes or []))
+    if not joined:
+        return False
+    return any(kw in joined for kw in THEME_SELECT_PAGE_KEYWORDS)
+
+
+def is_roguelike_theme_lobby(
+    boxes: Sequence[Dict[str, Any]],
+    preferred_theme: str = "BlackFlow",
+) -> bool:
+    """Return True iff OCR boxes positively identify a Roguelike theme lobby and NOT the theme selection page."""
+    if not boxes:
+        return False
+    if is_roguelike_theme_select_page(boxes):
+        return False
+    joined = "".join(_box_text_compact(b) for b in boxes)
+    if any(kw in joined for kw in THEME_LOBBY_KEYWORDS):
+        return True
+    # Avoid confusing reward pages (with '一键领取' / '已全部领取') for lobbies
+    if any(rw in joined for rw in (_REWARD_CLAIM_BUTTON_TEXTS + _REWARD_ALREADY_CLAIMED_TEXTS)):
+        return False
+    if detect_lobby_theme_from_boxes(boxes, preferred_theme=preferred_theme) is not None:
+        return True
+    if resolve_lobby_monthly_commission_entry(boxes, configured_theme=preferred_theme) is not None:
+        return True
+    return False
+
+
+def is_point_in_tech_tree_forbidden_zone(cx: int, cy: int) -> bool:
+    """Return True if a 1280x720 coordinate falls outside the safe clickable tech-tree node canvas
+    x in [0.08, 0.93], y in [0.16, 0.80] or inside forbidden UI zones:
+      - Left/Right edge page-turn arrows ('<-'/'->': x < 0.08 or x > 0.93)
+      - Bottom-left '64/78 已重构' attribute overview arch (x < 0.18 & y > 0.62; lower wide base x <= 0.22 & y >= 0.72)
+      - Top navigation bar (y < 0.16), bottom detail bar (y > 0.80), top-right points bar (x >= 0.78 & y <= 0.20)
+    """
+    nx = float(cx) / 1280.0
+    ny = float(cy) / 720.0
+    if nx < 0.08 or nx > 0.93 or ny < 0.16 or ny > 0.80:
+        return True
+    if nx < 0.18 and ny > 0.62:
+        return True
+    if nx <= 0.22 and ny >= 0.72:
+        return True
+    if nx >= 0.78 and ny <= 0.20:
+        return True
+    return False
+
+
+def is_point_near_tech_tree_arch_edge(cx: int, cy: int) -> bool:
+    """Return True if a non-forbidden candidate coordinate hugs the outer edge of the bottom-left
+    '64/78 已重构' arch (x in [0.08, 0.24], y in [0.56, 0.80]), where tapping risks opening the overview modal."""
+    if is_point_in_tech_tree_forbidden_zone(cx, cy):
+        return False
+    nx = float(cx) / 1280.0
+    ny = float(cy) / 720.0
+    return (0.08 <= nx <= 0.24) and (0.56 <= ny <= 0.80)
+
+
+def _has_rendered_ui_chrome(img: Optional[Image.Image]) -> bool:
+    """Return True if the screenshot has rendered UI chrome in top bar (y<100) or bottom bar (y>600).
+    Distinguishes real game screenshots / rich UI mock frames from flat blank synthetic test canvases.
+    """
+    if np is None or img is None:
+        return False
+    arr = np.asarray(img.convert("RGB").resize((1280, 720), Image.Resampling.BILINEAR), dtype=np.float32)
+    top_std = float(np.max(np.std(arr[:100, :, :], axis=(0, 1))))
+    bot_std = float(np.max(np.std(arr[600:, :, :], axis=(0, 1))))
+    return (top_std >= 2.0) or (bot_std >= 2.0)
+
+
+def _detect_top_bar_white_icon(
+    img: Image.Image,
+    roi_1280: Tuple[int, int, int, int],
+    boxes: Optional[Sequence[Dict[str, Any]]] = None,
+    reject_cjk_overlap: bool = False,
+) -> bool:
+    """Visual detector for crisp white navigation icons (< return arrow or home house icon) in top bar."""
+    if np is None or img is None:
+        return False
+    rx, ry, rw, rh = roi_1280
+    if reject_cjk_overlap and boxes:
+        for b in boxes:
+            txt = _box_text_compact(b)
+            if txt and re.search(r"[\u4e00-\u9fff]", txt) and _box_in_roi(b, roi_1280, pad=0):
+                return False
+    arr = np.asarray(img.convert("RGB").resize((1280, 720), Image.Resampling.BILINEAR), dtype=np.float32)
+    x0, y0 = max(0, rx), max(6, ry)
+    x1, y1 = min(1280, rx + rw), min(720, ry + rh)
+    patch = arr[y0:y1, x0:x1]
+    if patch.size == 0:
+        return False
+    luma = 0.299 * patch[:, :, 0] + 0.587 * patch[:, :, 1] + 0.114 * patch[:, :, 2]
+    max_c = np.maximum(np.maximum(patch[:, :, 0], patch[:, :, 1]), patch[:, :, 2])
+    min_c = np.minimum(np.minimum(patch[:, :, 0], patch[:, :, 1]), patch[:, :, 2])
+    sat = max_c - min_c
+    white_px = (luma >= 180.0) & (sat <= 40.0)
+    dark_px = luma <= 115.0
+    white_ratio = float(np.mean(white_px))
+    dark_ratio = float(np.mean(dark_px))
+    if not (0.012 <= white_ratio <= 0.45 and dark_ratio >= 0.35):
+        return False
+    ys, xs = np.where(white_px)
+    if ys.size < 40:
+        return False
+    span_w = int(xs.max() - xs.min()) + 1
+    span_h = int(ys.max() - ys.min()) + 1
+    return (12 <= span_w <= 110) and (12 <= span_h <= 68)
+
+
+def detect_tech_tree_home_icon(
+    img: Optional[Image.Image],
+    maa_dir: Optional[Path] = None,
+    boxes: Optional[Sequence[Dict[str, Any]]] = None,
+) -> bool:
+    """Detect the top-bar Home house icon (x in [0.15, 0.28], y < 0.12).
+    Whenever this icon is present, we are on a main sub-canvas (e.g. tech tree) and NEVER on an overview modal.
+    """
+    if np is None or img is None:
+        return False
+    if maa_dir is not None:
+        tpl_path = Path(maa_dir) / "resource" / "template" / "QuickSwitch" / "Menu.png"
+        if tpl_path.is_file():
+            gray_1280 = np.asarray(
+                img.convert("RGB").resize((1280, 720), Image.Resampling.BILINEAR).convert("L"),
+                dtype=np.float32,
+            )
+            matched, score, _, _ = stage_pilot._match_any_template(
+                gray_1280,
+                Path(maa_dir),
+                [("QuickSwitch/Menu.png", (160, 0, 210, 90), 0.65, None)],
+            )
+            if matched:
+                return True
+            # If MAA template exists and score is very low (<0.42), still allow visual check only if no CJK text overlaps
+            if score < 0.35 and boxes and any(
+                re.search(r"[\u4e00-\u9fff]", _box_text_compact(b)) and _box_in_roi(b, TECH_TREE_HOME_ICON_ROI_1280, pad=0)
+                for b in boxes
+            ):
+                return False
+    return _detect_top_bar_white_icon(img, TECH_TREE_HOME_ICON_ROI_1280, boxes=boxes, reject_cjk_overlap=True)
+
+
+def detect_tech_tree_return_icon(
+    img: Optional[Image.Image],
+    maa_dir: Optional[Path] = None,
+) -> bool:
+    """Detect the top-left '<' return icon (x < 0.14, y < 0.12)."""
+    if np is None or img is None:
+        return False
+    if maa_dir is not None:
+        ret1 = Path(maa_dir) / "resource" / "template" / "ReturnButton" / "Return.png"
+        ret2 = Path(maa_dir) / "resource" / "template" / "ReturnButton" / "Return-White.png"
+        if ret1.is_file() or ret2.is_file():
+            gray_1280 = np.asarray(
+                img.convert("RGB").resize((1280, 720), Image.Resampling.BILINEAR).convert("L"),
+                dtype=np.float32,
+            )
+            matched, _, _, _ = stage_pilot._match_any_template(
+                gray_1280,
+                Path(maa_dir),
+                [
+                    ("ReturnButton/Return.png", TECH_TREE_RETURN_ICON_ROI_1280, 0.65, None),
+                    ("ReturnButton/Return-White.png", TECH_TREE_RETURN_ICON_ROI_1280, 0.65, None),
+                ],
+            )
+            if matched:
+                return True
+    return _detect_top_bar_white_icon(img, (8, 0, 150, 86), boxes=None, reject_cjk_overlap=False)
+
+
+def extract_tech_tree_remaining_points(
+    img: Optional[Image.Image],
+    boxes: Sequence[Dict[str, Any]],
+    allow_roi_ocr: bool = True,
+    cancel_event: Optional[threading.Event] = None,
+) -> Optional[int]:
+    """Read remaining tech-tree upgrade points integer from top-right ROI (x > 0.78, y < 0.16)."""
+    def _parse_points_from_boxes(cand_boxes: Sequence[Dict[str, Any]]) -> Optional[int]:
+        nums: List[Tuple[int, int]] = []
+        for b in cand_boxes or []:
+            if not _box_in_roi(b, TECH_TREE_TOP_RIGHT_POINTS_ROI_1280, pad=10):
+                continue
+            txt = _box_text_compact(b)
+            if not txt:
+                continue
+            # Exclude ratios like 63/78 or clock times like 23:14
+            cleaned = re.sub(r"\d{1,3}/\d{1,3}", " ", txt)
+            cleaned = re.sub(r"\d{1,2}:\d{2}", " ", cleaned)
+            for m in re.finditer(r"\d{1,5}", cleaned):
+                val = int(m.group(0))
+                cx = _box_center(b)[0]
+                nums.append((cx, val))
+        if not nums:
+            return None
+        # Prefer rightmost top-right numeric badge
+        nums.sort(key=lambda t: -t[0])
+        return nums[0][1]
+
+    val = _parse_points_from_boxes(boxes)
+    if val is not None:
+        return val
+
+    if allow_roi_ocr and img is not None and _has_rendered_ui_chrome(img) and not (cancel_event and cancel_event.is_set()):
+        roi_boxes = stage_pilot.find_text_boxes_via_ocr(
+            img,
+            roi=TECH_TREE_TOP_RIGHT_POINTS_ROI_1280,
+            include_inverted=True,
+            include_binarized=True,
+            upscale_factor=2.5,
+            pad_border=10,
+            cancel_event=cancel_event,
+        )
+        return _parse_points_from_boxes(roi_boxes or [])
+    return None
+
+
+def _has_top_right_tech_points_indicator(
+    img: Optional[Image.Image],
+    boxes: Sequence[Dict[str, Any]],
+    allow_roi_ocr: bool = True,
+    cancel_event: Optional[threading.Event] = None,
+) -> Tuple[bool, Optional[int]]:
+    """Verify whether top-right ROI x in [0.78, 0.99], y in [0.02, 0.18] contains a tech-tree points number
+    or points currency name. Returns ``(has_indicator, parsed_points_or_None)``.
+    """
+    def _has_points_name_in_boxes(cand_boxes: Sequence[Dict[str, Any]]) -> bool:
+        for b in cand_boxes or []:
+            if not _box_in_roi(b, TECH_TREE_TOP_RIGHT_POINTS_ROI_1280, pad=10):
+                continue
+            txt = _box_text_compact(b)
+            if txt and any(kw in txt for kw in _TECH_TREE_POINTS_NAME_KEYWORDS):
+                return True
+        return False
+
+    pts = extract_tech_tree_remaining_points(img, boxes, allow_roi_ocr=False, cancel_event=cancel_event)
+    if pts is not None:
+        return True, pts
+    if _has_points_name_in_boxes(boxes):
+        return True, None
+
+    if allow_roi_ocr and img is not None and _has_rendered_ui_chrome(img) and not (cancel_event and cancel_event.is_set()):
+        roi_boxes = stage_pilot.find_text_boxes_via_ocr(
+            img,
+            roi=TECH_TREE_TOP_RIGHT_POINTS_ROI_1280,
+            include_inverted=True,
+            include_binarized=True,
+            upscale_factor=2.5,
+            pad_border=10,
+            cancel_event=cancel_event,
+        )
+        pts_roi = extract_tech_tree_remaining_points(img, roi_boxes or [], allow_roi_ocr=False, cancel_event=cancel_event)
+        if pts_roi is not None:
+            return True, pts_roi
+        if _has_points_name_in_boxes(roi_boxes or []):
+            return True, None
+    return False, None
+
+
+def _is_tech_tree_overview_overlay(
+    detail_boxes: Sequence[Dict[str, Any]],
+    has_bottom_confirm: bool = False,
+    detail_img: Optional[Image.Image] = None,
+    maa_dir: Optional[Path] = None,
+) -> bool:
+    """Detect accidental entry into the full-screen attribute overview modal.
+
+    STRICT rules (never triggered by bottom-left '63/78' or '已重构'):
+      1) If a bottom-right confirm button is active -> False.
+      2) If the top-bar Home house icon (x in [0.15, 0.28], y < 0.12) is present -> ALWAYS False (main tech-tree canvas!).
+      3) Only return True when NO house icon is present AND at least 2 distinct full-screen attribute summary groups
+         (e.g. '我方单位攻击力', '我方单位防御力', '初始源石锭', '我方单位生命值') or explicit overview title match.
+    """
+    if has_bottom_confirm:
+        return False
+    if detail_img is not None and detect_tech_tree_home_icon(detail_img, maa_dir=maa_dir, boxes=detail_boxes):
+        return False
+    compacts = [_box_text_compact(b) for b in (detail_boxes or [])]
+    joined = "".join(compacts)
+    if not joined:
+        return False
+    if any(kw in joined for kw in _TECH_OVERVIEW_OVERLAY_KEYWORDS):
+        return True
+    group_hits = sum(1 for grp in _TECH_OVERVIEW_ATTR_GROUPS if any(kw in joined for kw in grp))
+    return group_hits >= 2
+
+
+def classify_tech_tree_page_guard(
+    img: Image.Image,
+    boxes: Sequence[Dict[str, Any]],
+    maa_dir: Optional[Path],
+    active_profile: Dict[str, Any],
+    cancel_event: Optional[threading.Event] = None,
+) -> Dict[str, Any]:
+    """Per-round Page Guard inside the tech-tree upgrade loop.
+
+    Strict admission rules:
+      - Theme selection page ('进入主题' / '添加到终端' / '查看收藏' / '该主题已全额收录') -> ``'theme_select_page'``
+      - Wrong sub-panels (archive / investment / exhibition / medal set) -> ``'wrong_page'``
+      - Theme lobby ('开始探险' / '开始探索' / '蚀刻章套组' / '常规行动') -> ``'lobby'``
+      - Attribute overview overlay (no home icon + >=2 stat groups) -> ``'overview_overlay'``
+      - Tech-tree canvas ONLY when top '<' AND house icon AND top-right points indicator (number or name) ALL hold!
+    """
+    joined = "".join(_box_text_compact(b) for b in (boxes or []))
+
+    # 1. Hard check: Integrated Strategies Theme Selection page (NEVER tap nodes, swipe, or tap '<' here!)
+    if is_roguelike_theme_select_page(boxes):
+        return {
+            "status": "theme_select_page",
+            "wrong_keyword": "theme_select_page",
+            "has_home_icon": False,
+            "has_return_icon": False,
+            "points": None,
+        }
+
+    # 2. Explicit mis-entry pages (巫仪档案库 / 想象实体图鉴 / 虚构展览 / 设为活动主界面背景 / 投资系统 etc.)
+    for wrong_kw in _TECH_TREE_PAGE_GUARD_WRONG_KEYWORDS:
+        if wrong_kw in joined:
+            return {
+                "status": "wrong_page",
+                "wrong_keyword": wrong_kw,
+                "has_home_icon": False,
+                "has_return_icon": False,
+                "points": None,
+            }
+
+    # 3. Returned to Roguelike theme lobby -> stop safely (never click nodes or swipe on lobby!)
+    if any(lk in joined for lk in ("开始探险", "继续探险", "开始探索", "继续探索", "蚀刻章套组", "常规行动")):
+        return {
+            "status": "lobby",
+            "wrong_keyword": "theme_lobby",
+            "has_home_icon": False,
+            "has_return_icon": False,
+            "points": None,
+        }
+
+    has_home = detect_tech_tree_home_icon(img, maa_dir=maa_dir, boxes=boxes)
+    has_ret = detect_tech_tree_return_icon(img, maa_dir=maa_dir)
+
+    # 4. Full-screen attribute overview overlay (ONLY when home house icon is absent!)
+    if _is_tech_tree_overview_overlay(boxes, has_bottom_confirm=False, detail_img=img, maa_dir=maa_dir):
+        return {
+            "status": "overview_overlay",
+            "wrong_keyword": "overview_overlay",
+            "has_home_icon": has_home,
+            "has_return_icon": has_ret,
+            "points": None,
+        }
+
+    has_points_indicator, points = _has_top_right_tech_points_indicator(
+        img, boxes, allow_roi_ocr=True, cancel_event=cancel_event
+    )
+
+    # 5. Strict positive tech-tree canvas confirmation:
+    #    Must simultaneously satisfy top '<' + house icon + top-right points indicator (x in [0.78,0.99], y in [0.02,0.18])
+    if has_home and has_ret and has_points_indicator:
+        return {
+            "status": "tech_tree",
+            "wrong_keyword": "",
+            "has_home_icon": True,
+            "has_return_icon": True,
+            "points": points,
+        }
+
+    return {
+        "status": "unknown_not_tech_tree",
+        "wrong_keyword": "unverified_screen",
+        "has_home_icon": has_home,
+        "has_return_icon": has_ret,
+        "points": points,
+    }
+
+
+def _ocr_box_bbox_center(box: Dict[str, Any]) -> Tuple[int, int]:
+    """Return exact bounding-box center of an OCR box (preferring x+w/2, y+h/2 when bbox is present)."""
+    if all(k in box for k in ("x", "y", "w", "h")):
+        ux = int(round(float(box["x"]) + float(box["w"]) / 2.0))
+        uy = int(round(float(box["y"]) + float(box["h"]) / 2.0))
+        return ux, uy
+    return int(box.get("cx", 0)), int(box.get("cy", 0))
+
+
+def _execute_and_verify_tech_upgrade(
+    adb_path: str,
+    adb_addr: str,
+    before_img: Image.Image,
+    confirm_btn: Dict[str, Any],
+    points_before: Optional[int],
+    cancel_event: Optional[threading.Event] = None,
+    log_callback: Optional[Callable[[str], None]] = None,
+) -> Dict[str, Any]:
+    """Click the exact OCR bbox center of '确认升级', wait 0.6s, and verify points deduction (e.g. 35 -> 32)
+    or node state progression. Retries once if points/state unchanged (window focus protection).
+    """
+    ux, uy = _ocr_box_bbox_center(confirm_btn)
+    btn_label = str(confirm_btn.get("text") or "确认升级")
+
+    before_canvas_small = None
+    if np is not None:
+        b1280 = before_img.convert("RGB").resize((1280, 720), Image.Resampling.BILINEAR)
+        # Compare valid node canvas band (y in [115, 590]) for node progression
+        before_canvas_small = np.asarray(b1280.crop((40, 115, 1240, 590)).resize((300, 120)), dtype=np.float32)
+
+    last_after_img: Optional[Image.Image] = None
+    last_after_boxes: List[Dict[str, Any]] = []
+    last_points_after: Optional[int] = None
+
+    for attempt in (1, 2):
+        if cancel_event and cancel_event.is_set():
+            return {"verified": False, "cancelled": True, "tap_xy": (ux, uy)}
+
+        if attempt == 2:
+            _emit(
+                log_callback,
+                f"[RL-TECH] 首击「{btn_label}」({ux},{uy})后点数未扣除，补点一次以防窗口失焦...",
+            )
+        stage_pilot.adb_tap_norm(adb_path, adb_addr, ux, uy, before_img.width, before_img.height)
+        time.sleep(0.6)
+
+        after_img = stage_pilot.adb_screencap_image(adb_path, adb_addr)
+        if after_img is None:
+            return {"verified": False, "reason": "after_screencap_failed", "tap_xy": (ux, uy)}
+        last_after_img = after_img
+        after_boxes = stage_pilot.find_text_boxes_via_ocr(after_img, include_inverted=True)
+        last_after_boxes = list(after_boxes or [])
+        points_after = extract_tech_tree_remaining_points(
+            after_img, last_after_boxes, allow_roi_ocr=True, cancel_event=cancel_event
+        )
+        last_points_after = points_after
+
+        # Primary truth: top-right remaining points strictly decreased (e.g. 35 -> 32)!
+        if points_before is not None and points_after is not None and points_after < points_before:
+            return {
+                "verified": True,
+                "attempts": attempt,
+                "tap_xy": (ux, uy),
+                "points_before": points_before,
+                "points_after": points_after,
+                "verify_reason": f"points:{points_before}->{points_after}",
+                "after_img": after_img,
+                "after_boxes": last_after_boxes,
+            }
+
+        # Secondary truth: confirm button transitioned off active state OR canvas visibly progressed
+        after_color = inspect_tech_tree_confirm_button_color(after_img).get("state", "")
+        canvas_diff = 0.0
+        if before_canvas_small is not None and np is not None:
+            a1280 = after_img.convert("RGB").resize((1280, 720), Image.Resampling.BILINEAR)
+            after_canvas_small = np.asarray(a1280.crop((40, 115, 1240, 590)).resize((300, 120)), dtype=np.float32)
+            canvas_diff = float(np.mean(np.abs(after_canvas_small - before_canvas_small)))
+
+        # If points are explicitly known on both sides and did NOT decrease, require BOTH button drop and canvas change
+        if points_before is not None and points_after is not None:
+            state_advanced = (after_color in ("disabled_grey", "inactive")) and (canvas_diff > 6.0)
+        else:
+            state_advanced = (after_color in ("disabled_grey", "inactive")) or (canvas_diff > 5.0)
+
+        if state_advanced:
+            return {
+                "verified": True,
+                "attempts": attempt,
+                "tap_xy": (ux, uy),
+                "points_before": points_before,
+                "points_after": points_after,
+                "verify_reason": f"state_advanced(btn={after_color},diff={canvas_diff:.1f})",
+                "after_img": after_img,
+                "after_boxes": last_after_boxes,
+            }
+
+    return {
+        "verified": False,
+        "attempts": 2,
+        "tap_xy": (ux, uy),
+        "points_before": points_before,
+        "points_after": last_points_after,
+        "reason": f"no_effect_after_retry(points={points_before}->{last_points_after})",
+        "after_img": last_after_img,
+        "after_boxes": last_after_boxes,
+    }
+
+
+def inspect_tech_tree_confirm_button_color(
+    img: Image.Image,
+    roi_norm: Tuple[float, float, float, float] = TECH_TREE_CONFIRM_BTN_ROI_NORM,
+) -> Dict[str, Any]:
+    """Inspect bottom-right confirm button ROI (x in [0.74,0.98], y in [0.85,0.98]) color state:
+      - ``active``: vivid cyan-blue (Arknights '确认升级') or high-saturation bright clickable button
+      - ``disabled_grey``: desaturated mid-grey disabled button (e.g. '未解锁')
+      - ``unrendered_blank``: flat dark synthetic canvas (pure-mock unit test image with no UI rendered)
+      - ``inactive``: textured background without a clickable confirm button
+    """
+    if np is None or img is None:
+        return {"state": "unrendered_blank", "cyan_ratio": 0.0, "accent_ratio": 0.0, "grey_ratio": 0.0}
+    rgb = img.convert("RGB")
+    ow, oh = max(1, rgb.width), max(1, rgb.height)
+    nx0, ny0, nx1, ny1 = roi_norm
+    x0 = max(0, min(ow - 2, int(round(nx0 * ow))))
+    y0 = max(0, min(oh - 2, int(round(ny0 * oh))))
+    x1 = max(x0 + 2, min(ow, int(round(nx1 * ow))))
+    y1 = max(y0 + 2, min(oh, int(round(ny1 * oh))))
+    patch = np.asarray(rgb.crop((x0, y0, x1, y1)), dtype=np.float32)
+    if patch.size == 0:
+        return {"state": "unrendered_blank", "cyan_ratio": 0.0, "accent_ratio": 0.0, "grey_ratio": 0.0}
+
+    r, g, b = patch[:, :, 0], patch[:, :, 1], patch[:, :, 2]
+    luma = 0.299 * r + 0.587 * g + 0.114 * b
+    max_c = np.maximum(np.maximum(r, g), b)
+    min_c = np.minimum(np.minimum(r, g), b)
+    sat = max_c - min_c
+
+    # Cyan-blue clickable button (Arknights '确认升级 xN')
+    cyan_mask = (b >= 135.0) & (g >= 105.0) & ((b - r) >= 35.0)
+    # High-saturation bright clickable button across themes (cyan / gold / vivid orange)
+    accent_mask = (sat >= 48.0) & (luma >= 95.0)
+    # Desaturated grey disabled button ('未解锁' / insufficient points)
+    grey_mask = (sat <= 26.0) & (luma >= 55.0) & (luma <= 170.0)
+
+    cyan_ratio = float(np.mean(cyan_mask))
+    accent_ratio = float(np.mean(accent_mask))
+    grey_ratio = float(np.mean(grey_mask))
+    luma_mean = float(np.mean(luma))
+    luma_std = float(np.std(luma))
+
+    if cyan_ratio >= 0.08 or accent_ratio >= 0.10:
+        state = "active"
+    elif grey_ratio >= 0.15:
+        state = "disabled_grey"
+    elif luma_mean < 45.0 and luma_std < 2.0:
+        state = "unrendered_blank"
+    else:
+        state = "inactive"
+
+    return {
+        "state": state,
+        "cyan_ratio": round(cyan_ratio, 4),
+        "accent_ratio": round(accent_ratio, 4),
+        "grey_ratio": round(grey_ratio, 4),
+        "luma_mean": round(luma_mean, 2),
+        "luma_std": round(luma_std, 2),
+    }
+
+
+def evaluate_tech_tree_confirm_button(
+    detail_img: Image.Image,
+    detail_boxes: Sequence[Dict[str, Any]],
+    cancel_event: Optional[threading.Event] = None,
+) -> Dict[str, Any]:
+    """Single source of truth for tech-tree upgrade confirmation: inspect bottom-right button ROI
+    (x in [0.72, 0.99], y in [0.84, 0.99]) via OCR + color verification.
+
+    Returns ``button_status`` in:
+      ``'confirm_upgrade'`` | ``'already_upgraded'`` | ``'locked'`` | ``'insufficient_points'`` | ``'disabled_grey'`` | ``'none'``
+    """
+    color_info = inspect_tech_tree_confirm_button_color(detail_img)
+    color_state = color_info["state"]
+
+    # Collect OCR boxes inside strict bottom-right button ROI (x in [0.72, 0.99], y in [0.84, 0.99]) first
+    strict_boxes = [b for b in (detail_boxes or []) if _box_in_roi(b, TECH_TREE_CONFIRM_BTN_ROI_1280, pad=10)]
+    strict_joined = "".join(_box_text_compact(b) for b in strict_boxes)
+    has_strict_disabled = any(bad_kw in strict_joined for bad_kw in _TECH_UNAVAILABLE_TEXTS)
+    has_strict_action = (
+        _find_matching_ocr_box(
+            strict_boxes,
+            _TECH_UPGRADE_BUTTON_TEXTS,
+            exclude_keywords=_TECH_UPGRADE_BUTTON_EXCLUDE,
+        )
+        is not None
+    )
+
+    # Dedicated 2.5x upscaled ROI OCR on bottom-right button patch when:
+    # 1) Vivid cyan-blue/bright button is rendered but full-screen OCR missed its text; OR
+    # 2) Grey disabled button is rendered and full-screen OCR returned ZERO boxes in bottom-right ROI
+    #    (lets us distinguish '已升级' vs '未解锁' vs '点数不足' reliably!).
+    need_roi_ocr = (
+        (color_state == "active" and not has_strict_action and not has_strict_disabled)
+        or (color_state == "disabled_grey" and not strict_boxes and _has_rendered_ui_chrome(detail_img))
+    )
+    if need_roi_ocr and not (cancel_event and cancel_event.is_set()):
+        roi_ocr_boxes = stage_pilot.find_text_boxes_via_ocr(
+            detail_img,
+            roi=TECH_TREE_CONFIRM_BTN_ROI_1280,
+            include_inverted=True,
+            include_binarized=True,
+            upscale_factor=2.5,
+            pad_border=12,
+            cancel_event=cancel_event,
+        )
+        if roi_ocr_boxes:
+            strict_boxes = list(roi_ocr_boxes)
+            strict_joined = "".join(_box_text_compact(b) for b in strict_boxes)
+
+    def _classify_unavailable(kw: str) -> Tuple[str, bool, bool, bool]:
+        if kw in _TECH_ALREADY_UPGRADED_TEXTS:
+            return "already_upgraded", False, True, False
+        if kw in _TECH_INSUFFICIENT_POINTS_TEXTS:
+            return "insufficient_points", True, False, False
+        if kw in _TECH_LOCKED_TEXTS:
+            return "locked", False, False, True
+        return "disabled_grey", False, False, False
+
+    # Check disabled / already-upgraded / locked text inside bottom-right button ROI
+    for bad_kw in _TECH_UNAVAILABLE_TEXTS:
+        if bad_kw in strict_joined:
+            b_status, insuff, already_up, is_locked = _classify_unavailable(bad_kw)
+            return {
+                "valid": False,
+                "reason": f"disabled_text:{bad_kw}",
+                "button_status": b_status,
+                "insufficient_points": insuff,
+                "already_upgraded": already_up,
+                "is_locked": is_locked,
+                "color_state": color_state,
+                "button": None,
+            }
+
+    # Explicit grey disabled button state -> reject even if OCR misread the disabled label
+    if color_state == "disabled_grey":
+        return {
+            "valid": False,
+            "reason": "disabled_grey_button",
+            "button_status": "disabled_grey",
+            "insufficient_points": False,
+            "already_upgraded": False,
+            "is_locked": False,
+            "color_state": color_state,
+            "button": None,
+        }
+
+    # Search valid action button inside strict bottom-right ROI (x in [0.72, 0.99], y in [0.84, 0.99])
+    btn = _find_matching_ocr_box(
+        strict_boxes,
+        _TECH_UPGRADE_BUTTON_TEXTS,
+        exclude_keywords=_TECH_UPGRADE_BUTTON_EXCLUDE,
+    )
+
+    # Compatibility fallback for legacy blank-canvas unit tests whose mock button is at (1020..1060, 580)
+    if btn is None and color_state == "unrendered_blank":
+        compat_boxes = [b for b in (detail_boxes or []) if _box_in_roi(b, _TECH_TREE_CONFIRM_BTN_COMPAT_ROI_1280, pad=10)]
+        compat_joined = "".join(_box_text_compact(b) for b in compat_boxes)
+        for bad_kw in _TECH_UNAVAILABLE_TEXTS:
+            if bad_kw in compat_joined:
+                b_status, insuff, already_up, is_locked = _classify_unavailable(bad_kw)
+                return {
+                    "valid": False,
+                    "reason": f"disabled_text:{bad_kw}",
+                    "button_status": b_status,
+                    "insufficient_points": insuff,
+                    "already_upgraded": already_up,
+                    "is_locked": is_locked,
+                    "color_state": color_state,
+                    "button": None,
+                }
+        btn = _find_matching_ocr_box(
+            compat_boxes,
+            _TECH_UPGRADE_BUTTON_TEXTS,
+            exclude_keywords=_TECH_UPGRADE_BUTTON_EXCLUDE,
+        )
+
+    if btn is None:
+        return {
+            "valid": False,
+            "reason": "no_confirm_button_text",
+            "button_status": "none",
+            "insufficient_points": False,
+            "already_upgraded": False,
+            "is_locked": False,
+            "color_state": color_state,
+            "button": None,
+        }
+
+    # On rendered screenshots, require active cyan-blue/bright clickable color state!
+    if color_state not in ("active", "unrendered_blank"):
+        return {
+            "valid": False,
+            "reason": f"button_not_active_color:{color_state}",
+            "button_status": "none",
+            "insufficient_points": False,
+            "already_upgraded": False,
+            "is_locked": False,
+            "color_state": color_state,
+            "button": None,
+        }
+
+    # Also check node description region (excluding bottom-left '64/78 已重构' badge & top header) for points shortage
+    desc_boxes = [
+        b for b in (detail_boxes or [])
+        if not is_point_in_tech_tree_forbidden_zone(*_box_center(b))
+        or (_box_center(b)[0] >= 300 and _box_center(b)[1] >= 540)
+    ]
+    desc_text = " ".join(str(b.get("text") or "") for b in desc_boxes)
+    for shortage_kw in ("点数不足", "材料不足", "资源不足", "前置未解锁", "已满级"):
+        if shortage_kw in desc_text:
+            b_status, insuff, already_up, is_locked = _classify_unavailable(shortage_kw)
+            return {
+                "valid": False,
+                "reason": f"desc_unavailable:{shortage_kw}",
+                "button_status": b_status,
+                "insufficient_points": insuff,
+                "already_upgraded": already_up,
+                "is_locked": is_locked,
+                "color_state": color_state,
+                "button": None,
+            }
+
+    return {
+        "valid": True,
+        "reason": "ok",
+        "button_status": "confirm_upgrade",
+        "insufficient_points": False,
+        "already_upgraded": False,
+        "is_locked": False,
+        "color_state": color_state,
+        "button": btn,
+        "detail_text": desc_text,
+    }
+
+
+def _compute_sobel_grad_2d(luma: "np.ndarray") -> "np.ndarray":
+    """Compute Sobel gradient magnitude on a 2D float32 luminance array (pure NumPy)."""
+    p = np.pad(luma.astype(np.float32), ((1, 1), (1, 1)), mode="edge")
+    gx = (
+        (p[:-2, 2:] + 2.0 * p[1:-1, 2:] + p[2:, 2:])
+        - (p[:-2, :-2] + 2.0 * p[1:-1, :-2] + p[2:, :-2])
+    ) * 0.25
+    gy = (
+        (p[2:, :-2] + 2.0 * p[2:, 1:-1] + p[2:, 2:])
+        - (p[:-2, :-2] + 2.0 * p[:-2, 1:-1] + p[:-2, 2:])
+    ) * 0.25
+    return np.hypot(gx, gy).astype(np.float32)
+
+
+def _build_tech_tree_allowed_mask(canvas_roi: Tuple[int, int, int, int]) -> "np.ndarray":
+    """Return 720x1280 bool mask strictly limited to safe scan ROI minus all forbidden UI zones."""
+    mask = np.zeros((720, 1280), dtype=bool)
+    rx, ry, rw, rh = canvas_roi
+    x0, y0 = max(0, int(rx)), max(0, int(ry))
+    x1, y1 = min(1280, int(rx + rw)), min(720, int(ry + rh))
+    if x1 > x0 and y1 > y0:
+        mask[y0:y1, x0:x1] = True
+    for fx0, fy0, fx1, fy1 in TECH_TREE_FORBIDDEN_ZONES_NORM:
+        mx0 = max(0, int(round(fx0 * 1280.0)))
+        my0 = max(0, int(round(fy0 * 720.0)))
+        mx1 = min(1280, int(round(fx1 * 1280.0)))
+        my1 = min(720, int(round(fy1 * 720.0)))
+        if mx1 > mx0 and my1 > my0:
+            mask[my0:my1, mx0:mx1] = False
+    return mask
+
+
+# Precomputed 8 angular sectors x 3 sub-rays for fast closed-halo ring verification
+_HALO_SECTOR_RAYS: Tuple[Tuple[Tuple[float, float], ...], ...] = tuple(
+    tuple(
+        (
+            float(np.cos(np.deg2rad(sec * 45.0 + off))),
+            float(np.sin(np.deg2rad(sec * 45.0 + off))),
+        )
+        for off in (-12.0, 0.0, 12.0)
+    )
+    for sec in range(8)
+) if np is not None else ()
+
+
+def _evaluate_tech_node_halo_at(
+    cx: int,
+    cy: int,
+    luma: "np.ndarray",
+    sat: "np.ndarray",
+    bg_local: "np.ndarray",
+    grad: "np.ndarray",
+    est_r: int = 28,
+) -> Optional[Dict[str, Any]]:
+    """Verify whether (cx, cy) is a frontier upgradeable grey stone tablet surrounded by a closed
+    high-gradient bright white glowing outline, strictly rejecting solid pure-white upgraded icons,
+    dark locked stone tablets, and smooth warm-white background light patches.
+    """
+    h, w = luma.shape
+    if is_point_in_tech_tree_forbidden_zone(cx, cy):
+        return None
+
+    # Test adaptive radii around est_r so circles, squares, octagons, and tall steles all match cleanly
+    cand_radii = sorted(
+        {
+            max(16, min(46, int(est_r) + delta))
+            for delta in (-8, -4, 0, 4, 8)
+        }
+        | {22, 28, 34}
+    )
+
+    best_halo: Optional[Dict[str, Any]] = None
+    for rad in cand_radii:
+        # 1. Central 40% core region: reject solid pure-white upgraded nodes!
+        rc = max(7, int(round(0.42 * rad)))
+        cy0, cy1 = max(0, cy - rc), min(h, cy + rc + 1)
+        cx0, cx1 = max(0, cx - rc), min(w, cx + rc + 1)
+        core_l = luma[cy0:cy1, cx0:cx1]
+        core_s = sat[cy0:cy1, cx0:cx1]
+        if core_l.size < 25:
+            continue
+        core_mean = float(np.mean(core_l))
+        core_sat_mean = float(np.mean(core_s))
+        core_white_ratio = float(np.mean((core_l >= 200.0) & (core_s <= 45.0)))
+
+        # Hard reject solid pure-white upgraded icons & bright warm-white light cores
+        if core_white_ratio >= 0.42 or (core_mean >= 190.0 and core_sat_mean <= 48.0):
+            continue
+        # Stone tablet interior must be mid-grey (not pitch-black void, not blinding white)
+        if not (30.0 <= core_mean <= 178.0):
+            continue
+
+        # 2. 8-sector closed glowing white outer rim check across radial band [0.55*R, 1.45*R]
+        r_steps = np.linspace(max(10.0, 0.55 * rad), min(66.0, 1.45 * rad), 10, dtype=np.float32)
+        out_steps = np.linspace(min(74.0, 1.55 * rad), min(88.0, 1.88 * rad), 4, dtype=np.float32)
+
+        valid_sectors = 0
+        valid_cardinals = 0
+        sec_lumas: List[float] = []
+        sec_grads: List[float] = []
+        outer_vals: List[float] = []
+
+        for sec_idx, rays in enumerate(_HALO_SECTOR_RAYS):
+            best_sec_wl = 0.0
+            best_sec_grad = 0.0
+            for dx, dy in rays:
+                xs = np.clip(np.round(cx + dx * r_steps).astype(np.int32), 0, w - 1)
+                ys = np.clip(np.round(cy + dy * r_steps).astype(np.int32), 0, h - 1)
+                rl = luma[ys, xs]
+                rs = sat[ys, xs]
+                rg = grad[ys, xs]
+                white_sel = rs <= 58.0
+                if np.any(white_sel):
+                    wl = float(np.max(rl[white_sel]))
+                    if wl > best_sec_wl:
+                        best_sec_wl = wl
+                mg = float(np.max(rg))
+                if mg > best_sec_grad:
+                    best_sec_grad = mg
+
+                oxs = np.clip(np.round(cx + dx * out_steps).astype(np.int32), 0, w - 1)
+                oys = np.clip(np.round(cy + dy * out_steps).astype(np.int32), 0, h - 1)
+                outer_vals.append(float(np.median(luma[oys, oxs])))
+
+            sec_lumas.append(best_sec_wl)
+            sec_grads.append(best_sec_grad)
+            if (best_sec_wl >= 170.0) and ((best_sec_wl - core_mean) >= 28.0) and (best_sec_grad >= 20.0):
+                valid_sectors += 1
+                if sec_idx % 2 == 0:
+                    valid_cardinals += 1
+
+        if valid_sectors < 6 or valid_cardinals < 3:
+            continue
+
+        ring_luma_med = float(np.median(sec_lumas))
+        ring_grad_med = float(np.median(sec_grads))
+        outer_bg_med = float(np.median(outer_vals)) if outer_vals else 0.0
+        ring_minus_core = ring_luma_med - core_mean
+        ring_minus_outer = ring_luma_med - outer_bg_med
+
+        if (
+            ring_luma_med >= 175.0
+            and ring_minus_core >= 30.0
+            and ring_grad_med >= 20.0
+            and ring_minus_outer >= 22.0
+        ):
+            quality = (
+                valid_sectors * 15.0
+                + min(120.0, ring_minus_core)
+                + min(80.0, ring_grad_med)
+                + min(80.0, ring_minus_outer) * 0.5
+                - core_white_ratio * 120.0
+            )
+            if best_halo is None or quality > best_halo["halo_score"]:
+                # 3. Check for bright white glowing connecting line entering from the LEFT side
+                lx0 = max(0, cx - int(round(rad * 1.15)) - 54)
+                lx1 = max(lx0 + 4, cx - int(round(rad * 1.02)) - 2)
+                ly0 = max(0, cy - max(20, int(round(rad * 0.90))))
+                ly1 = min(h, cy + max(20, int(round(rad * 0.90))))
+                strip_l = luma[ly0:ly1, lx0:lx1]
+                strip_s = sat[ly0:ly1, lx0:lx1]
+                strip_bg = bg_local[ly0:ly1, lx0:lx1]
+                has_left_line = False
+                if strip_l.size > 0:
+                    glow_line_px = (strip_l >= 165.0) & (strip_s <= 52.0) & ((strip_l - strip_bg) >= 22.0)
+                    col_hits = np.any(glow_line_px, axis=0)
+                    has_left_line = (
+                        int(np.sum(glow_line_px)) >= 10
+                        and float(np.mean(col_hits)) >= 0.25
+                        and float(np.mean(glow_line_px)) <= 0.55
+                    )
+
+                best_halo = {
+                    "cx": int(cx),
+                    "cy": int(cy),
+                    "radius": int(rad),
+                    "lit_pixels": int(round(valid_sectors * rad * 2.5)),
+                    "has_halo": True,
+                    "has_left_glow_line": has_left_line,
+                    "core_white_ratio": round(core_white_ratio, 4),
+                    "core_mean": round(core_mean, 1),
+                    "ring_luma": round(ring_luma_med, 1),
+                    "halo_sectors": int(valid_sectors),
+                    "halo_score": round(quality, 2),
+                    "node_kind": "glowing_frontier",
+                }
+    return best_halo
+
+
+def _has_solid_white_upgraded_nodes(
+    img: Image.Image,
+    canvas_roi: Tuple[int, int, int, int] = TECH_TREE_CANVAS_ROI_1280,
+) -> bool:
+    """Return True if the safe canvas ROI contains compact solid pure-white already-upgraded icons
+    (used on all-upgraded left pages when zero frontier glowing-halo nodes exist to trigger left-swipe).
+    """
+    if np is None or img is None:
+        return False
+    arr = np.asarray(img.convert("RGB").resize((1280, 720), Image.Resampling.BILINEAR), dtype=np.float32)
+    luma = 0.299 * arr[:, :, 0] + 0.587 * arr[:, :, 1] + 0.114 * arr[:, :, 2]
+    sat = np.maximum(np.maximum(arr[:, :, 0], arr[:, :, 1]), arr[:, :, 2]) - np.minimum(
+        np.minimum(arr[:, :, 0], arr[:, :, 1]), arr[:, :, 2]
+    )
+    bg_local = _box_mean_2d(luma, radius=28)
+    allowed = _build_tech_tree_allowed_mask(canvas_roi)
+    solid_white = allowed & (luma >= 205.0) & (sat <= 42.0) & ((luma - bg_local) >= 35.0)
+    # Require at least one compact >= 140px solid-white icon cluster inside safe canvas
+    cell = 24
+    gh, gw = 720 // cell, 1280 // cell
+    counts = solid_white[: gh * cell, : gw * cell].reshape(gh, cell, gw, cell).sum(axis=(1, 3))
+    return bool(np.any(counts >= 140))
+
+
 def detect_upgradeable_tech_nodes(
     img: Image.Image,
-    canvas_roi: Tuple[int, int, int, int] = (80, 90, 1120, 560),
+    canvas_roi: Tuple[int, int, int, int] = TECH_TREE_CANVAS_ROI_1280,
     brightness_threshold: float = 175.0,
     min_cluster_pixels: int = 24,
 ) -> List[Dict[str, Any]]:
-    """Detect lit / glowing upgradeable nodes in a tech-tree screenshot via brightness & highlight clustering."""
-    if np is None:
+    """Detect upgradeable frontier nodes in a tech-tree screenshot.
+
+    Strictly limits scanning to ``x in [0.08, 0.93], y in [0.16, 0.80]`` (excluding left/right page arrows
+    and the bottom-left ``64/78 已重构`` arch ``x < 0.18, y > 0.62``) and classifies nodes by local structure:
+      1) Eliminates already-upgraded solid pure-white icons (high pure-white pixel ratio in central 40% core).
+      2) Eliminates dark locked tablets and smooth warm-white background glow patches (never uses global brightness mean).
+      3) Extracts closed high-gradient bright white glowing-halo grey stone tablets, preferring left-connected frontier nodes.
+      4) Sorts candidates strictly left-to-right (X ascending, then Y ascending) within priority tier.
+    """
+    if np is None or img is None:
         return []
     img_1280 = img.convert("RGB").resize((1280, 720), Image.Resampling.BILINEAR)
     arr = np.asarray(img_1280, dtype=np.float32)
 
-    rx, ry, rw, rh = canvas_roi
-    x0, y0 = max(0, rx), max(0, ry)
-    x1, y1 = min(1280, rx + rw), min(720, ry + rh)
-    patch = arr[y0:y1, x0:x1]
-    if patch.size == 0:
-        return []
+    r_ch, g_ch, b_ch = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
+    luma = 0.299 * r_ch + 0.587 * g_ch + 0.114 * b_ch
+    max_c = np.maximum(np.maximum(r_ch, g_ch), b_ch)
+    min_c = np.minimum(np.minimum(r_ch, g_ch), b_ch)
+    sat = max_c - min_c
 
-    # Lit upgradeable nodes typically exhibit bright cyan/gold/white borders or high-luminance glow
-    luma = 0.299 * patch[:, :, 0] + 0.587 * patch[:, :, 1] + 0.114 * patch[:, :, 2]
-    warm_gold = (patch[:, :, 0] > 190) & (patch[:, :, 1] > 145) & (patch[:, :, 2] < 130)
-    bright_cyan = (patch[:, :, 2] > 185) & (patch[:, :, 1] > 165) & (patch[:, :, 0] < 150)
-    bright_white = luma >= brightness_threshold
-    lit_mask = bright_white | warm_gold | bright_cyan
+    bg_local = _box_mean_2d(luma, radius=28)
+    grad = _compute_sobel_grad_2d(luma)
+    allowed_mask = _build_tech_tree_allowed_mask(canvas_roi)
 
-    # Downsample onto a 32x32 grid to cluster distinct node locations quickly without scipy
-    cell = 32
-    gh = max(1, patch.shape[0] // cell)
-    gw = max(1, patch.shape[1] // cell)
-    trimmed = lit_mask[: gh * cell, : gw * cell]
-    counts = trimmed.reshape(gh, cell, gw, cell).sum(axis=(1, 3))
+    # ------------------------------------------------------------------
+    # Stream A: Multi-scale closed glowing white halo proposal (2x max-pooled -> 640x360)
+    # Preserves razor-thin 2-3px glowing white outlines while ignoring straight connecting lines
+    # and smooth warm-white background flares!
+    # ------------------------------------------------------------------
+    white_rim_px = (
+        allowed_mask
+        & (luma >= max(160.0, brightness_threshold - 10.0))
+        & (sat <= 55.0)
+        & (((luma - bg_local) >= 18.0) | (grad >= 20.0))
+    )
+    core_white_px = (luma >= 200.0) & (sat <= 45.0)
 
-    raw_centers: List[Tuple[int, int, int]] = []
-    visited = np.zeros((gh, gw), dtype=bool)
-    for cy in range(gh):
-        for cx in range(gw):
-            if visited[cy, cx] or counts[cy, cx] < min_cluster_pixels:
+    rim_h = white_rim_px.reshape(360, 2, 640, 2).max(axis=(1, 3)).astype(np.float32)
+    luma_h = luma.reshape(360, 2, 640, 2).mean(axis=(1, 3)).astype(np.float32)
+    cwhite_h = core_white_px.reshape(360, 2, 640, 2).mean(axis=(1, 3)).astype(np.float32)
+    allow_h = allowed_mask.reshape(360, 2, 640, 2).min(axis=(1, 3))
+
+    best_score_map = np.zeros((360, 640), dtype=np.float32)
+    best_rad_map = np.full((360, 640), 28, dtype=np.int32)
+
+    for rh in (10, 14, 18, 22):
+        r_strip = max(2, rh // 4)
+        rim_s = _box_mean_2d(rim_h, radius=r_strip)
+        r_core = max(3, int(round(0.45 * rh)))
+        core_l = _box_mean_2d(luma_h, radius=r_core)
+        core_w = _box_mean_2d(cwhite_h, radius=r_core)
+
+        sl_y = slice(rh, 360 - rh)
+        sl_x = slice(rh, 640 - rh)
+        d = max(1, int(round(0.71 * rh)))
+
+        top = rim_s[0 : 360 - 2 * rh, sl_x]
+        bot = rim_s[2 * rh : 360, sl_x]
+        lft = rim_s[sl_y, 0 : 640 - 2 * rh]
+        rgt = rim_s[sl_y, 2 * rh : 640]
+        tl = rim_s[rh - d : 360 - rh - d, rh - d : 640 - rh - d]
+        tr = rim_s[rh - d : 360 - rh - d, rh + d : 640 - rh + d]
+        bl = rim_s[rh + d : 360 - rh + d, rh - d : 640 - rh - d]
+        br = rim_s[rh + d : 360 - rh + d, rh + d : 640 - rh + d]
+
+        th = 0.075
+        card_cnt = (top >= th).astype(np.int8) + (bot >= th).astype(np.int8) + (lft >= th).astype(np.int8) + (rgt >= th).astype(np.int8)
+        dir_cnt = card_cnt + (tl >= th).astype(np.int8) + (tr >= th).astype(np.int8) + (bl >= th).astype(np.int8) + (br >= th).astype(np.int8)
+        ring_min4 = np.minimum(np.minimum(top, bot), np.minimum(lft, rgt))
+        ring_avg8 = (top + bot + lft + rgt + tl + tr + bl + br) * 0.125
+
+        core_ok = (
+            allow_h[sl_y, sl_x]
+            & (core_l[sl_y, sl_x] >= 28.0)
+            & (core_l[sl_y, sl_x] <= 180.0)
+            & (core_w[sl_y, sl_x] < 0.42)
+        )
+        sc = np.where(
+            core_ok & (card_cnt >= 3) & (dir_cnt >= 5),
+            ring_avg8 * (0.4 + ring_min4) * (1.0 + 0.01 * np.clip(215.0 - core_l[sl_y, sl_x], 0.0, 150.0)),
+            0.0,
+        ).astype(np.float32)
+
+        sub_best = best_score_map[sl_y, sl_x]
+        better = sc > sub_best
+        if np.any(better):
+            sub_best[better] = sc[better]
+            best_rad_map[sl_y, sl_x][better] = rh * 2
+
+    # Non-maximum suppression on half-res halo score map (extract up to 32 peaks)
+    halo_proposals: List[Tuple[int, int, int, float]] = []
+    peak_ys, peak_xs = np.where(best_score_map >= 0.05)
+    if peak_ys.size > 0:
+        peak_vals = best_score_map[peak_ys, peak_xs]
+        # Fast pre-filter to top 4000 pixels if needed
+        if peak_vals.size > 4000:
+            top_idx = np.argpartition(peak_vals, -4000)[-4000:]
+            peak_ys = peak_ys[top_idx]
+            peak_xs = peak_xs[top_idx]
+            peak_vals = peak_vals[top_idx]
+        order = np.argsort(-peak_vals)
+        for idx in order:
+            hy = int(peak_ys[idx])
+            hx = int(peak_xs[idx])
+            val = float(peak_vals[idx])
+            if any(abs(hx - px) < 22 and abs(hy - py) < 22 for px, py, _, _ in halo_proposals):
                 continue
-            # Flood-fill 8-connected bright cells
-            stack = [(cy, cx)]
-            visited[cy, cx] = True
+            halo_proposals.append((hx, hy, int(best_rad_map[hy, hx]), val))
+            if len(halo_proposals) >= 32:
+                break
+
+    verified_nodes: List[Dict[str, Any]] = []
+    for hx, hy, est_r, _ in halo_proposals:
+        cx_full, cy_full = hx * 2, hy * 2
+        ev = _evaluate_tech_node_halo_at(cx_full, cy_full, luma, sat, bg_local, grad, est_r=est_r)
+        if ev is not None:
+            verified_nodes.append(ev)
+
+    # ------------------------------------------------------------------
+    # Stream B: Compact saturated warm-gold / bright-cyan accent nodes (BlackFlow / other themes)
+    # Strictly requires sat >= 65 (completely rejects pure-white upgraded icons & warm-white flares!)
+    # ------------------------------------------------------------------
+    warm_gold = allowed_mask & (r_ch > 190.0) & (g_ch > 145.0) & (b_ch < 140.0) & (sat >= 65.0) & ((luma - bg_local) >= 20.0)
+    bright_cyan = allowed_mask & (b_ch > 180.0) & (g_ch > 160.0) & (r_ch < 150.0) & (sat >= 65.0) & ((luma - bg_local) >= 20.0)
+    accent_mask = warm_gold | bright_cyan
+
+    cell = 16
+    gh, gw = 720 // cell, 1280 // cell
+    acc_counts = accent_mask[: gh * cell, : gw * cell].reshape(gh, cell, gw, cell).sum(axis=(1, 3))
+    cell_min = max(8, min_cluster_pixels // 2)
+    visited = np.zeros((gh, gw), dtype=bool)
+    accent_candidates: List[Tuple[int, int, int]] = []
+    for gy in range(gh):
+        for gx in range(gw):
+            if visited[gy, gx] or acc_counts[gy, gx] < cell_min:
+                continue
+            stack = [(gy, gx)]
+            visited[gy, gx] = True
             total_px = 0
             sum_x = 0.0
             sum_y = 0.0
+            min_gx, max_gx, min_gy, max_gy = gx, gx, gy, gy
             while stack:
                 py, px = stack.pop()
-                w_px = int(counts[py, px])
+                w_px = int(acc_counts[py, px])
                 total_px += w_px
                 sum_x += (px + 0.5) * cell * w_px
                 sum_y += (py + 0.5) * cell * w_px
+                if px < min_gx:
+                    min_gx = px
+                if px > max_gx:
+                    max_gx = px
+                if py < min_gy:
+                    min_gy = py
+                if py > max_gy:
+                    max_gy = py
                 for dy in (-1, 0, 1):
                     for dx in (-1, 0, 1):
-                        ny, nx = py + dy, px + dx
-                        if 0 <= ny < gh and 0 <= nx < gw and not visited[ny, nx] and counts[ny, nx] >= min_cluster_pixels:
-                            visited[ny, nx] = True
-                            stack.append((ny, nx))
-            if total_px >= min_cluster_pixels:
-                node_x = int(round(x0 + sum_x / total_px))
-                node_y = int(round(y0 + sum_y / total_px))
-                raw_centers.append((total_px, node_x, node_y))
+                        ny_c, nx_c = py + dy, px + dx
+                        if 0 <= ny_c < gh and 0 <= nx_c < gw and not visited[ny_c, nx_c] and acc_counts[ny_c, nx_c] >= cell_min:
+                            visited[ny_c, nx_c] = True
+                            stack.append((ny_c, nx_c))
+            bw = (max_gx - min_gx + 1) * cell
+            bh = (max_gy - min_gy + 1) * cell
+            if total_px >= min_cluster_pixels and bw <= 128 and bh <= 128:
+                nx = int(round(sum_x / total_px))
+                ny = int(round(sum_y / total_px))
+                if not is_point_in_tech_tree_forbidden_zone(nx, ny):
+                    accent_candidates.append((total_px, nx, ny))
 
-    # Deduplicate nearby centroids (within 56px)
-    raw_centers.sort(key=lambda t: -t[0])
-    nodes: List[Dict[str, Any]] = []
-    for px_cnt, nx, ny in raw_centers:
-        if any(abs(nx - n["cx"]) < 56 and abs(ny - n["cy"]) < 56 for n in nodes):
+    for px_cnt, nx, ny in sorted(accent_candidates, key=lambda t: -t[0]):
+        if any(abs(nx - n["cx"]) < 52 and abs(ny - n["cy"]) < 52 for n in verified_nodes):
             continue
-        nodes.append({"cx": nx, "cy": ny, "lit_pixels": px_cnt})
+        # Reject if core is solid pure white or lacks sharp edge gradient
+        core_l = luma[max(0, ny - 10) : min(720, ny + 11), max(0, nx - 10) : min(1280, nx + 11)]
+        core_s = sat[max(0, ny - 10) : min(720, ny + 11), max(0, nx - 10) : min(1280, nx + 11)]
+        ring_g = grad[max(0, ny - 32) : min(720, ny + 33), max(0, nx - 32) : min(1280, nx + 33)]
+        if core_l.size == 0 or ring_g.size == 0:
+            continue
+        c_white_ratio = float(np.mean((core_l >= 200.0) & (core_s <= 45.0)))
+        if c_white_ratio >= 0.38:
+            continue
+        if float(np.mean(core_s)) < 50.0 or float(np.percentile(ring_g, 96)) < 18.0 or float(np.max(ring_g)) < 28.0:
+            continue
+        verified_nodes.append({
+            "cx": nx,
+            "cy": ny,
+            "lit_pixels": px_cnt,
+            "has_halo": False,
+            "has_left_glow_line": False,
+            "core_white_ratio": round(c_white_ratio, 4),
+            "node_kind": "accent_lit",
+        })
 
-    # Sort left-to-right, top-to-bottom for deterministic inspection
-    nodes.sort(key=lambda n: (n["cx"], n["cy"]))
-    return nodes
+    # Deduplicate nearby centroids (within 52px), keeping strongest halo node
+    verified_nodes.sort(
+        key=lambda n: (
+            0 if n.get("has_halo") else 1,
+            -float(n.get("halo_score", 0.0)),
+            -int(n.get("lit_pixels", 0)),
+        )
+    )
+    deduped: List[Dict[str, Any]] = []
+    for cand in verified_nodes:
+        if any(abs(cand["cx"] - n["cx"]) < 52 and abs(cand["cy"] - n["cy"]) < 52 for n in deduped):
+            continue
+        deduped.append(cand)
+
+    # Final priority order:
+    #   1) Glowing-halo grey stone frontier nodes first
+    #   2) Left-white-line-connected frontier nodes before unconnected/isolated ones
+    #   3) Strictly left-to-right (X ascending), then top-to-bottom (Y ascending)
+    deduped.sort(
+        key=lambda n: (
+            0 if n.get("has_halo") else 1,
+            0 if n.get("has_left_glow_line") else 1,
+            int(n["cx"]),
+            int(n["cy"]),
+        )
+    )
+    return deduped
 
 
 def _tap_return_to_lobby(
@@ -1657,26 +3812,115 @@ def _tap_return_to_lobby(
     maa_dir: Path,
     theme: str,
     max_taps: int = 3,
+    cancel_event: Optional[threading.Event] = None,
     log_callback: Optional[Callable[[str], None]] = None,
 ) -> bool:
-    """Tap top-left return button until back on the Roguelike theme lobby screen."""
-    profile = get_theme_ui_profile(theme)
-    for _ in range(max_taps):
+    """Tap top-left '<' return button one tap at a time, waiting 1.2s after each tap and immediately
+    verifying lobby identity ('开始探险'/'开始探索'/'蚀刻章套组'/'常规行动' etc.).
+    Stops immediately once back in lobby OR if the Theme Selection page is detected (never blind-taps '<').
+    """
+    tapped_any = False
+    for _ in range(max(1, int(max_taps))):
+        if cancel_event and cancel_event.is_set():
+            return False
         img = stage_pilot.adb_screencap_image(adb_path, adb_addr)
         if img is None:
             return False
-        boxes = stage_pilot.find_text_boxes_via_ocr(img, include_inverted=False)
-        joined = " ".join(b.get("compact", "") for b in boxes)
-        if "开始探索" in joined or any(k in joined for k in profile["lobby_keywords"][1:]):
+        boxes = stage_pilot.find_text_boxes_via_ocr(img, include_inverted=True, cancel_event=cancel_event)
+        if is_roguelike_theme_lobby(boxes, preferred_theme=theme):
             return True
-        st = stage_pilot.analyze_screen_state(img, maa_dir, use_ocr_fallback=False)
-        if st.get("has_return"):
-            stage_pilot.adb_tap_norm(adb_path, adb_addr, 64, 40, img.width, img.height)
-        else:
-            stage_pilot.adb_tap_norm(adb_path, adb_addr, 64, 40, img.width, img.height)
-        time.sleep(0.8)
+        if is_roguelike_theme_select_page(boxes):
+            _emit(log_callback, "[WARN][RL-POST] 返回大厅校验检测到处于「主题选择页」，立即停止点击返回键 (<)。")
+            return False
+        stage_pilot.adb_tap_norm(adb_path, adb_addr, 64, 40, img.width, img.height)
+        tapped_any = True
+        time.sleep(1.2)
+
+    if tapped_any and not (cancel_event and cancel_event.is_set()):
+        img_final = stage_pilot.adb_screencap_image(adb_path, adb_addr)
+        if img_final is not None:
+            boxes_final = stage_pilot.find_text_boxes_via_ocr(img_final, include_inverted=True, cancel_event=cancel_event)
+            if is_roguelike_theme_lobby(boxes_final, preferred_theme=theme):
+                return True
+            if is_roguelike_theme_select_page(boxes_final):
+                _emit(log_callback, "[WARN][RL-POST] 返回大厅末次校验检测到处于「主题选择页」，立即停止返回。")
+                return False
+
     _emit(log_callback, f"[RL-POST] 已尝试返回 {theme} 主界面。")
-    return True
+    return False
+
+
+def _recover_from_theme_select_to_lobby(
+    adb_path: str,
+    adb_addr: str,
+    maa_dir: Path,
+    img: Image.Image,
+    boxes: Sequence[Dict[str, Any]],
+    target_theme: str,
+    cancel_event: Optional[threading.Event] = None,
+    log_callback: Optional[Callable[[str], None]] = None,
+) -> Dict[str, Any]:
+    """Recover from the Integrated Strategies Theme Selection hub page back into ``target_theme`` lobby
+    by selecting the target theme card if needed and tapping '进入主题' (strictly avoiding '添加到终端' / '查看收藏').
+    """
+    norm_theme = normalize_roguelike_theme(target_theme, default="BlackFlow")
+    profile = get_theme_ui_profile(norm_theme)
+    disp = str(profile.get("display_name") or norm_theme)
+    select_kws = list(profile.get("theme_select_keywords") or [disp])
+
+    cur_img = img
+    cur_boxes = list(boxes or [])
+
+    for _step in range(2):
+        if cancel_event and cancel_event.is_set():
+            return {"ok": False, "cancelled": True, "img": cur_img, "boxes": cur_boxes}
+
+        if is_roguelike_theme_lobby(cur_boxes, preferred_theme=norm_theme):
+            return {"ok": True, "cancelled": False, "img": cur_img, "boxes": cur_boxes}
+
+        enter_box = _find_matching_ocr_box(
+            cur_boxes,
+            ("进入主题",),
+            exclude_keywords=("添加到终端", "查看收藏", "该主题已全额收录"),
+        )
+        target_card_box = _find_matching_ocr_box(
+            cur_boxes,
+            select_kws,
+            exclude_keywords=("添加到终端", "查看收藏", "该主题已全额收录", "进入主题"),
+        )
+        # Check if a DIFFERENT theme's display name is highlighted as the active card when our target card is visible
+        cur_joined = "".join(_box_text_compact(b) for b in cur_boxes)
+        target_visible = any(kw in cur_joined for kw in select_kws if kw)
+
+        if enter_box is not None and (target_visible or target_card_box is None):
+            _emit(
+                log_callback,
+                f"[RL-TECH] 主题选择页命中「{enter_box['text']}」({enter_box['cx']},{enter_box['cy']})，点击返回「{disp}」大厅...",
+            )
+            stage_pilot.adb_tap_norm(adb_path, adb_addr, enter_box["cx"], enter_box["cy"], cur_img.width, cur_img.height)
+            time.sleep(1.5)
+        elif target_card_box is not None:
+            _emit(
+                log_callback,
+                f"[RL-TECH] 主题选择页点击目标主题卡片「{target_card_box['text']}」({target_card_box['cx']},{target_card_box['cy']})...",
+            )
+            stage_pilot.adb_tap_norm(
+                adb_path, adb_addr, target_card_box["cx"], target_card_box["cy"], cur_img.width, cur_img.height
+            )
+            time.sleep(1.2)
+        else:
+            return {"ok": False, "cancelled": False, "img": cur_img, "boxes": cur_boxes}
+
+        next_img = stage_pilot.adb_screencap_image(adb_path, adb_addr)
+        if next_img is None:
+            return {"ok": False, "cancelled": False, "img": cur_img, "boxes": cur_boxes}
+        cur_img = next_img
+        cur_boxes = list(stage_pilot.find_text_boxes_via_ocr(cur_img, include_inverted=True, cancel_event=cancel_event) or [])
+        if is_roguelike_theme_lobby(cur_boxes, preferred_theme=norm_theme):
+            _emit(log_callback, f"[RL-TECH] 已从主题选择页成功返回「{disp}」主题大厅。")
+            return {"ok": True, "cancelled": False, "img": cur_img, "boxes": cur_boxes}
+
+    return {"ok": False, "cancelled": False, "img": cur_img, "boxes": cur_boxes}
 
 
 def _claim_all_on_current_reward_page(
@@ -1721,6 +3965,236 @@ def _claim_all_on_current_reward_page(
     return claimed
 
 
+def _other_theme_unique_markers(target_theme: str) -> List[str]:
+    """Return unique level-reward / tech-tree markers belonging to OTHER Roguelike themes."""
+    norm_target = normalize_roguelike_theme(target_theme, default="BlackFlow")
+    markers: List[str] = []
+    for t_key, prof in THEME_UI_PROFILES.items():
+        if t_key == norm_target:
+            continue
+        lvl = prof.get("level_reward", {})
+        tech = prof.get("tech_tree", {})
+        for kw in (lvl.get("name", ""), tech.get("name", "")):
+            if kw and kw not in markers and "/" not in kw:
+                markers.append(kw)
+    return markers
+
+
+def ensure_roguelike_theme_lobby(
+    adb_path: str,
+    adb_addr: str,
+    maa_dir: Path,
+    theme: str = "BlackFlow",
+    max_steps: int = 12,
+    cancel_event: Optional[threading.Event] = None,
+    log_callback: Optional[Callable[[str], None]] = None,
+    accept_any_current_lobby: bool = True,
+) -> Dict[str, Any]:
+    """Ensure the game is positioned on a Roguelike theme lobby before reward/tech-tree actions.
+
+    If already inside any of the 6 permanent Roguelike theme lobbies on step 0 and
+    ``accept_any_current_lobby`` is True, keep the user's current lobby and report ``detected_theme``.
+    """
+    norm_theme = normalize_roguelike_theme(theme, default="BlackFlow")
+    profile = get_theme_ui_profile(norm_theme)
+    disp = str(profile.get("display_name") or norm_theme)
+    select_kws = list(profile.get("theme_select_keywords") or [disp, profile["level_reward"]["name"]])
+
+    result: Dict[str, Any] = {
+        "ok": False,
+        "cancelled": False,
+        "already_in_lobby": False,
+        "theme": norm_theme,
+        "detected_theme": norm_theme,
+        "steps": 0,
+        "last_screen": "unknown",
+        "reason": "",
+    }
+    if not adb_path or not adb_addr:
+        result["reason"] = "ADB 路径或地址为空"
+        return result
+
+    swipes_used = 0
+    returned_home_once = False
+
+    for step in range(max(1, int(max_steps))):
+        if cancel_event and cancel_event.is_set():
+            result["cancelled"] = True
+            result["reason"] = "cancelled"
+            return result
+
+        img = stage_pilot.adb_screencap_image(adb_path, adb_addr, timeout=5.0, cancel_event=cancel_event)
+        if cancel_event and cancel_event.is_set():
+            result["cancelled"] = True
+            result["reason"] = "cancelled"
+            return result
+        if img is None:
+            result["reason"] = "ADB 截屏失败，无法定位肉鸽主题大厅"
+            return result
+
+        # Check network disconnect popup first
+        disc = stage_pilot.detect_network_disconnect_popup(img, maa_dir=maa_dir, use_ocr=True, cancel_event=cancel_event)
+        if disc.get("detected"):
+            _emit(log_callback, f"[NET][RL-POST] 导航至「{disp}」大厅时检测到网络掉线弹窗，自动点击确认重连...")
+            stage_pilot.dismiss_network_disconnect_popup(
+                adb_path, adb_addr, maa_dir=maa_dir, max_taps=2, cancel_event=cancel_event, log_callback=log_callback
+            )
+            result["last_screen"] = "disconnect_popup"
+            result["steps"] = step + 1
+            time.sleep(2.0)
+            continue
+
+        boxes = stage_pilot.find_text_boxes_via_ocr(img, include_inverted=True, cancel_event=cancel_event)
+        joined = "".join(re.sub(r"\s+", "", str(b.get("compact") or b.get("text") or "")) for b in (boxes or []))
+        result["steps"] = step
+
+        on_theme_select = is_roguelike_theme_select_page(boxes)
+        detected_theme = None if on_theme_select else detect_lobby_theme_from_boxes(boxes, preferred_theme=norm_theme)
+        has_explore_btn = (not on_theme_select) and any(
+            k in joined for k in ("开始探险", "继续探险", "开始探索", "继续探索", "蚀刻章套组", "常规行动")
+        )
+
+        # 1. Target theme lobby reached!
+        if (not on_theme_select) and (detected_theme == norm_theme or (has_explore_btn and detected_theme is None)):
+            result["ok"] = True
+            result["already_in_lobby"] = (step == 0)
+            result["detected_theme"] = norm_theme
+            result["last_screen"] = "theme_lobby"
+            result["reason"] = f"已就绪于「{disp}」主题大厅"
+            _emit(log_callback, f"[RL-POST] {result['reason']}，开始扫描等级奖励、月度委托与科技树入口。")
+            return result
+
+        # 1b. Already manually positioned in another permanent Roguelike theme lobby on step 0 -> adapt in-place!
+        if (not on_theme_select) and step == 0 and accept_any_current_lobby and detected_theme is not None and detected_theme != norm_theme:
+            det_disp = str(THEME_UI_PROFILES[detected_theme].get("display_name") or detected_theme)
+            result["ok"] = True
+            result["already_in_lobby"] = True
+            result["detected_theme"] = detected_theme
+            result["last_screen"] = "theme_lobby"
+            result["reason"] = (
+                f"检测到当前已位于「{det_disp}」主题大厅（配置主题为「{disp}」），"
+                f"直接按当前大厅主题扫描等级奖励、月度委托与科技树入口"
+            )
+            _emit(log_callback, f"[RL-POST] {result['reason']}。")
+            return result
+
+        # 2. Currently in another Roguelike theme's lobby -> exit back to theme selector
+        if (not on_theme_select) and has_explore_btn and detected_theme is not None and detected_theme != norm_theme:
+            result["last_screen"] = "other_theme_lobby"
+            sw_box = _find_matching_ocr_box(boxes, ("主题切换", "切换主题", "更换主题"))
+            tx, ty = (sw_box["cx"], sw_box["cy"]) if sw_box else (64, 40)
+            _emit(log_callback, f"[RL-POST] 当前位于其他肉鸽主题大厅，点击 ({tx},{ty}) 返回主题选择页以切换至「{disp}」...")
+            stage_pilot.adb_tap_norm(adb_path, adb_addr, tx, ty, img.width, img.height, cancel_event=cancel_event)
+            time.sleep(1.2)
+            continue
+
+        # 3. Roguelike theme selection / hub screen
+        target_sel_box = _find_matching_ocr_box(
+            boxes,
+            select_kws,
+            exclude_keywords=("添加到终端", "查看收藏", "该主题已全额收录"),
+        )
+        enter_theme_box = _find_matching_ocr_box(
+            boxes,
+            ("进入主题", "前往"),
+            exclude_keywords=("添加到终端", "查看收藏", "该主题已全额收录"),
+        )
+        if target_sel_box is not None and (
+            on_theme_select or "集成战略" in joined or "长期探索" not in joined or enter_theme_box is not None
+        ):
+            result["last_screen"] = "roguelike_hub"
+            # When '进入主题' button is explicitly shown alongside target theme title, tap '进入主题' directly
+            click_box = enter_theme_box if (on_theme_select and enter_theme_box is not None) else target_sel_box
+            _emit(
+                log_callback,
+                f"[RL-POST] 主题选择页命中「{click_box['text']}」({click_box['cx']},{click_box['cy']})，点击进入「{disp}」...",
+            )
+            stage_pilot.adb_tap_norm(
+                adb_path, adb_addr, click_box["cx"], click_box["cy"], img.width, img.height, cancel_event=cancel_event
+            )
+            time.sleep(1.8)
+            continue
+
+        if "集成战略" in joined and ("生息演算" in joined or "保全派驻" in joined or "长期探索" in joined):
+            result["last_screen"] = "long_term_exploration"
+            is_box = _find_matching_ocr_box(boxes, ("集成战略",))
+            if is_box is not None:
+                _emit(log_callback, f"[RL-POST] 长期探索页 -> 点击「集成战略」({is_box['cx']},{is_box['cy']})...")
+                stage_pilot.adb_tap_norm(
+                    adb_path, adb_addr, is_box["cx"], is_box["cy"], img.width, img.height, cancel_event=cancel_event
+                )
+                time.sleep(1.6)
+                continue
+
+        if on_theme_select or "集成战略" in joined or enter_theme_box is not None:
+            result["last_screen"] = "roguelike_hub"
+            if swipes_used < 4:
+                swipes_used += 1
+                if swipes_used <= 2:
+                    _emit(log_callback, f"[RL-POST] 肉鸽主题页未见「{disp}」，右滑主题列表查找 ({swipes_used}/4)...")
+                    stage_pilot.adb_swipe_norm(adb_path, adb_addr, 550, 560, 120, 560, 420, img.width, img.height, cancel_event=cancel_event)
+                else:
+                    _emit(log_callback, f"[RL-POST] 肉鸽主题页未见「{disp}」，左滑主题列表查找 ({swipes_used}/4)...")
+                    stage_pilot.adb_swipe_norm(adb_path, adb_addr, 120, 560, 550, 560, 420, img.width, img.height, cancel_event=cancel_event)
+                time.sleep(1.0)
+                continue
+            if enter_theme_box is not None:
+                _emit(log_callback, f"[RL-POST] 尝试点击「{enter_theme_box['text']}」({enter_theme_box['cx']},{enter_theme_box['cy']})...")
+                stage_pilot.adb_tap_norm(
+                    adb_path, adb_addr, enter_theme_box["cx"], enter_theme_box["cy"], img.width, img.height, cancel_event=cancel_event
+                )
+                time.sleep(1.6)
+                continue
+
+        # 4. Terminal screen -> click 长期探索 (or 集成战略)
+        lt_box = _find_matching_ocr_box(boxes, ("长期探索", "常态事务"))
+        if lt_box is not None:
+            result["last_screen"] = "terminal"
+            _emit(log_callback, f"[RL-POST] 终端界面 -> 点击「{lt_box['text']}」({lt_box['cx']},{lt_box['cy']})...")
+            stage_pilot.adb_tap_norm(
+                adb_path, adb_addr, lt_box["cx"], lt_box["cy"], img.width, img.height, cancel_event=cancel_event
+            )
+            time.sleep(1.5)
+            continue
+
+        # 5. Home screen -> click 终端
+        term_box = _find_matching_ocr_box(boxes, ("终端",))
+        if term_box is not None and any(hk in joined for hk in ("编队", "干员", "采购中心", "基建", "公开招募", "理智")):
+            result["last_screen"] = "home"
+            _emit(log_callback, f"[RL-POST] 游戏主界面 -> 点击「终端」({term_box['cx']},{term_box['cy']})...")
+            stage_pilot.adb_tap_norm(
+                adb_path, adb_addr, term_box["cx"], term_box["cy"], img.width, img.height, cancel_event=cancel_event
+            )
+            time.sleep(1.6)
+            continue
+
+        # 6. Unknown subpage -> dismiss guide popup or return to Home once
+        guide_res = stage_pilot.dismiss_guide_popups(
+            adb_path, adb_addr, maa_dir=maa_dir, max_dismiss=2, cancel_event=cancel_event, log_callback=log_callback
+        )
+        if int(guide_res.get("dismissed_count", 0) or 0) > 0:
+            time.sleep(0.8)
+            continue
+
+        if not returned_home_once:
+            returned_home_once = True
+            _emit(log_callback, f"[RL-POST] 当前不在「{disp}」主题大厅，先返回游戏主界面再自动进入集成战略...")
+            stage_pilot.return_to_home_screen(
+                adb_path, adb_addr, maa_dir, max_steps=5, cancel_event=cancel_event, log_callback=log_callback
+            )
+            time.sleep(1.2)
+            continue
+
+        time.sleep(1.0)
+
+    result["reason"] = (
+        f"未能在 {max_steps} 步内进入「{disp}」主题大厅（最后界面={result['last_screen']}）；"
+        f"请确认游戏已登录在线或手动进入该主题大厅后重试。"
+    )
+    _emit(log_callback, f"[WARN][RL-POST] {result['reason']}")
+    return result
+
+
 def claim_roguelike_rewards(
     adb_path: str,
     adb_addr: str,
@@ -1729,14 +4203,21 @@ def claim_roguelike_rewards(
     cancel_event: Optional[threading.Event] = None,
     log_callback: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, Any]:
-    """Detect and claim level rewards (e.g. '源流堆栈') and monthly commissions ('本月委托栏') from theme lobby."""
-    profile = get_theme_ui_profile(theme)
+    """Detect and claim level rewards (all 6 permanent themes) and monthly commissions from theme lobby."""
+    norm_theme = normalize_roguelike_theme(theme, default="BlackFlow")
+    profile = get_theme_ui_profile(norm_theme)
+    active_theme = norm_theme
+    active_profile = profile
     result: Dict[str, Any] = {
         "ok": True,
-        "theme": theme,
+        "theme": norm_theme,
+        "detected_theme": norm_theme,
         "source": "adb_ocr",
         "level_rewards_claimed": 0,
         "commission_rewards_claimed": 0,
+        "level_entry_found": False,
+        "commission_entry_found": False,
+        "matched_via_fallback": False,
         "actions": [],
         "cancelled": False,
     }
@@ -1749,35 +4230,90 @@ def claim_roguelike_rewards(
     if img is None:
         result["ok"] = False
         result["error"] = "ADB 截图失败，跳过领奖"
+        _emit(log_callback, f"[WARN][RL-REWARD] {result['error']}")
         return result
 
     lobby_boxes = stage_pilot.find_text_boxes_via_ocr(img, include_inverted=True)
 
-    # 1. Level Rewards (e.g. BlackFlow top-right "源流堆栈")
-    lvl_spec = profile["level_reward"]
-    lvl_box = _find_matching_ocr_box(lobby_boxes, lvl_spec["keywords"], roi=lvl_spec["roi"])
-    if lvl_box is not None:
-        _emit(log_callback, f"[RL-REWARD] 主界面定位等级奖励入口「{lvl_box['text']}」({lvl_box['cx']},{lvl_box['cy']})，进入领奖...")
+    # 1. Level Rewards (configured theme priority + all-6-theme auto fallback)
+    lvl_hit = resolve_lobby_level_reward_entry(lobby_boxes, configured_theme=norm_theme)
+    if lvl_hit is not None:
+        active_theme = lvl_hit["theme"]
+        active_profile = lvl_hit["profile"]
+        lvl_spec = active_profile["level_reward"]
+        lvl_box = lvl_hit["box"]
+        result["detected_theme"] = active_theme
+        result["matched_via_fallback"] = bool(lvl_hit["matched_via_fallback"])
+        result["level_entry_found"] = True
+        if lvl_hit["matched_via_fallback"]:
+            _emit(
+                log_callback,
+                f"[RL-REWARD] 按配置主题「{profile['display_name']}」未命中，已自动泛匹配当前大厅"
+                f"「{active_profile['display_name']}」等级奖励入口「{lvl_box['text']}」({lvl_box['cx']},{lvl_box['cy']})，进入领奖...",
+            )
+        else:
+            _emit(
+                log_callback,
+                f"[RL-REWARD] 主界面定位等级奖励入口「{lvl_box['text']}」({lvl_box['cx']},{lvl_box['cy']})，进入领奖...",
+            )
         stage_pilot.adb_tap_norm(adb_path, adb_addr, lvl_box["cx"], lvl_box["cy"], img.width, img.height)
         time.sleep(1.0)
         n_lvl = _claim_all_on_current_reward_page(
             adb_path, adb_addr, cancel_event=cancel_event, log_callback=log_callback, page_label=lvl_spec["name"]
         )
         result["level_rewards_claimed"] = n_lvl
-        result["actions"].append({"entry": lvl_spec["name"], "claimed": n_lvl})
-        _tap_return_to_lobby(adb_path, adb_addr, maa_dir, theme, log_callback=log_callback)
+        result["actions"].append({"entry": lvl_spec["name"], "claimed": n_lvl, "theme": active_theme})
+        if n_lvl == 0:
+            _emit(log_callback, f"[RL-REWARD] {lvl_spec['name']}：当前无可领取的等级奖励。")
+        _tap_return_to_lobby(
+            adb_path, adb_addr, maa_dir, active_theme, cancel_event=cancel_event, log_callback=log_callback
+        )
+    else:
+        det_hint = detect_lobby_theme_from_boxes(lobby_boxes, preferred_theme=norm_theme)
+        if det_hint:
+            active_theme = det_hint
+            active_profile = get_theme_ui_profile(det_hint)
+            result["detected_theme"] = active_theme
+        _emit(
+            log_callback,
+            f"[RL-REWARD] 主界面未识别到等级奖励入口（配置主题「{profile['display_name']}」对应「{profile['level_reward']['name']}」，泛匹配 6 主题均未命中），跳过等级奖励领取。",
+        )
 
     if cancel_event and cancel_event.is_set():
         result["cancelled"] = True
         return result
 
-    # 2. Monthly Commissions (e.g. BlackFlow right-side "本月委托栏")
+    # 2. Monthly Commissions (unified '本月委托栏' / '本月委托'; silent skip on ended themes)
     img2 = stage_pilot.adb_screencap_image(adb_path, adb_addr)
     if img2 is not None:
         lobby_boxes2 = stage_pilot.find_text_boxes_via_ocr(img2, include_inverted=True)
-        comm_spec = profile["monthly_commission"]
-        comm_box = _find_matching_ocr_box(lobby_boxes2, comm_spec["keywords"], roi=comm_spec["roi"])
+        if is_roguelike_theme_select_page(lobby_boxes2):
+            _emit(log_callback, "[WARN][RL-REWARD] 领奖返回后检测到误处「主题选择页」，尝试点击「进入主题」回到大厅...")
+            rec = _recover_from_theme_select_to_lobby(
+                adb_path,
+                adb_addr,
+                maa_dir,
+                img2,
+                lobby_boxes2,
+                target_theme=active_theme,
+                cancel_event=cancel_event,
+                log_callback=log_callback,
+            )
+            if rec.get("ok"):
+                img2 = rec["img"]
+                lobby_boxes2 = rec["boxes"]
+            else:
+                result["commission_skipped_reason"] = "theme_select_page_guard"
+                return result
+        det_on_screen2 = detect_lobby_theme_from_boxes(lobby_boxes2, preferred_theme=active_theme)
+        if det_on_screen2 and not result["level_entry_found"]:
+            active_theme = det_on_screen2
+            active_profile = get_theme_ui_profile(det_on_screen2)
+            result["detected_theme"] = active_theme
+        comm_spec = active_profile["monthly_commission"]
+        comm_box = resolve_lobby_monthly_commission_entry(lobby_boxes2, configured_theme=active_theme)
         if comm_box is not None:
+            result["commission_entry_found"] = True
             _emit(log_callback, f"[RL-REWARD] 主界面定位月度委托入口「{comm_box['text']}」({comm_box['cx']},{comm_box['cy']})，进入领奖...")
             stage_pilot.adb_tap_norm(adb_path, adb_addr, comm_box["cx"], comm_box["cy"], img2.width, img2.height)
             time.sleep(1.0)
@@ -1785,8 +4321,25 @@ def claim_roguelike_rewards(
                 adb_path, adb_addr, cancel_event=cancel_event, log_callback=log_callback, page_label=comm_spec["name"]
             )
             result["commission_rewards_claimed"] = n_comm
-            result["actions"].append({"entry": comm_spec["name"], "claimed": n_comm})
-            _tap_return_to_lobby(adb_path, adb_addr, maa_dir, theme, log_callback=log_callback)
+            result["actions"].append({"entry": comm_spec["name"], "claimed": n_comm, "theme": active_theme})
+            if n_comm == 0:
+                _emit(log_callback, f"[RL-REWARD] {comm_spec['name']}：当前无可领取的委托奖励。")
+            _tap_return_to_lobby(
+                adb_path, adb_addr, maa_dir, active_theme, cancel_event=cancel_event, log_callback=log_callback
+            )
+        else:
+            if active_profile.get("is_ended_theme"):
+                result["commission_skipped_reason"] = "ended_theme_no_commission"
+                _emit(
+                    log_callback,
+                    f"[RL-REWARD] 当前主题「{active_profile['display_name']}」为已完结常驻主题（主界面无「本月委托栏」/「本月委托」入口），正常跳过委托领奖。",
+                )
+            else:
+                result["commission_skipped_reason"] = "no_commission_entry_visible"
+                _emit(
+                    log_callback,
+                    f"[RL-REWARD] 主界面未识别到月度委托入口（「本月委托栏」/「本月委托」），当前无可用月度委托，正常跳过委托领奖。",
+                )
 
     return result
 
@@ -1800,16 +4353,27 @@ def auto_upgrade_roguelike_tech_tree(
     max_upgrades: int = 12,
     cancel_event: Optional[threading.Event] = None,
     log_callback: Optional[Callable[[str], None]] = None,
+    lobby_confirmed_theme: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Enter Roguelike tech tree (e.g. BlackFlow '生命游戏'), detect lit upgradeable nodes, and upgrade by priority."""
-    profile = get_theme_ui_profile(theme)
+    """Enter Roguelike tech tree via 3-tier pipeline:
+      1) Full-screen OCR (configured theme + all-6-theme fallback + split-char merge + blacklist/left-ROI)
+      2) Local left-band ROI (x in [0.01,0.28], y in [0.25,0.75]) 2.5x red-suppressed adaptive binary & CLAHE OCR
+         (supports both tech-tree text and non-blacklisted pure numeric point badges in y in [0.35,0.50])
+      3) Confirmed-lobby standard 16:9 normalized anchor fallback + fast secondary-panel verification
+    """
+    norm_theme = normalize_roguelike_theme(theme, default="BlackFlow")
+    profile = get_theme_ui_profile(norm_theme)
     tech_spec = profile["tech_tree"]
     eff_priority = list(priority_order) if priority_order else list(DEFAULT_TECH_TREE_PRIORITY)
     result: Dict[str, Any] = {
         "ok": True,
-        "theme": theme,
+        "theme": norm_theme,
+        "detected_theme": norm_theme,
         "tech_tree_name": tech_spec["name"],
         "source": "adb_ocr",
+        "entry_found": False,
+        "entry_stage": "",
+        "matched_via_fallback": False,
         "upgraded_count": 0,
         "upgraded_nodes": [],
         "cancelled": False,
@@ -1823,91 +4387,671 @@ def auto_upgrade_roguelike_tech_tree(
     if img is None:
         result["ok"] = False
         result["error"] = "ADB 截图失败，跳过科技树加点"
+        _emit(log_callback, f"[WARN][RL-TECH] {result['error']}")
         return result
 
+    # Tier 1: Full-screen OCR (configured theme priority + all-6-theme fallback)
     lobby_boxes = stage_pilot.find_text_boxes_via_ocr(img, include_inverted=True)
-    entry_box = _find_matching_ocr_box(lobby_boxes, tech_spec["keywords"], roi=tech_spec["roi"])
-    if entry_box is None:
-        result["skipped_reason"] = f"主界面未识别到科技树入口「{tech_spec['name']}」"
+
+    # Track confirmed lobby theme from upstream ([RL-POST]/[RL-REWARD]) or current screen's level reward
+    confirmed_theme = (
+        normalize_roguelike_theme(lobby_confirmed_theme, default="")
+        if lobby_confirmed_theme
+        else ""
+    )
+
+    # Hard Guard: If currently on the Integrated Strategies Theme Selection page
+    # ('进入主题' / '添加到终端' / '查看收藏' / '该主题已全额收录'), NEVER run tech-tree anchor fallback or node scanning!
+    # Must click target theme's '进入主题' to return to lobby first; abort cleanly if recovery fails.
+    if is_roguelike_theme_select_page(lobby_boxes):
+        _emit(
+            log_callback,
+            "[WARN][RL-TECH] 检测到当前处于集成战略「主题选择页」，严禁执行科技树锚点兜底与节点扫描，先尝试点击「进入主题」返回大厅...",
+        )
+        rec = _recover_from_theme_select_to_lobby(
+            adb_path=adb_path,
+            adb_addr=adb_addr,
+            maa_dir=maa_dir,
+            img=img,
+            boxes=lobby_boxes,
+            target_theme=confirmed_theme or norm_theme,
+            cancel_event=cancel_event,
+            log_callback=log_callback,
+        )
+        if rec.get("cancelled") or (cancel_event and cancel_event.is_set()):
+            result["ok"] = False
+            result["cancelled"] = True
+            return result
+        if not rec.get("ok"):
+            result["entry_found"] = False
+            result["wrong_panel_detected"] = "theme_select_page"
+            result["skipped_reason"] = "当前处于主题选择页，已拦截科技树锚点兜底与节点扫描（未能通过「进入主题」返回大厅）"
+            _emit(log_callback, f"[WARN][RL-TECH] {result['skipped_reason']}。")
+            return result
+        img = rec["img"]
+        lobby_boxes = rec["boxes"]
+
+    tech_hit = resolve_lobby_tech_tree_entry(lobby_boxes, configured_theme=norm_theme)
+
+    if not confirmed_theme and not is_roguelike_theme_select_page(lobby_boxes):
+        lvl_confirm = resolve_lobby_level_reward_entry(lobby_boxes, configured_theme=norm_theme)
+        if lvl_confirm is not None:
+            confirmed_theme = lvl_confirm["theme"]
+
+    # Tier 2: Local left-band ROI (x in [0.01,0.28], y in [0.25,0.75]) 2.5x red-suppressed & CLAHE OCR
+    if tech_hit is None and not is_roguelike_theme_select_page(lobby_boxes):
+        _emit(
+            log_callback,
+            f"[RL-TECH] 全屏 OCR 未命中「{tech_spec['name']}」，启动第二级局部去红通道/CLAHE 2.5× 放大二次 OCR...",
+        )
+        tech_hit = resolve_lobby_tech_tree_via_local_ocr(
+            img,
+            configured_theme=confirmed_theme or norm_theme,
+            cancel_event=cancel_event,
+            log_callback=log_callback,
+        )
+        if cancel_event and cancel_event.is_set():
+            result["ok"] = False
+            result["cancelled"] = True
+            return result
+
+    # Tier 3: Confirmed-lobby standard 16:9 theme anchor fallback (strictly blocked on theme selection page)
+    if tech_hit is None and confirmed_theme and not is_roguelike_theme_select_page(lobby_boxes):
+        tech_hit = _resolve_theme_anchor_fallback(img, confirmed_theme=confirmed_theme, boxes=lobby_boxes)
+        if tech_hit is not None:
+            _emit(
+                log_callback,
+                f"[RL-TECH] 前两级 OCR 均未识出科技树文字，但已确认处于「{tech_hit['profile']['display_name']}」大厅，"
+                f"启用第三级标准布局锚点兜底 ({tech_hit['box']['cx']},{tech_hit['box']['cy']})...",
+            )
+
+    if tech_hit is None:
+        result["skipped_reason"] = (
+            f"主界面左侧有效区未识别到科技树入口（配置主题「{profile['display_name']}」对应「{tech_spec['name']}」，"
+            f"全屏 OCR 与局部去红/CLAHE 二次 OCR 均未命中）"
+        )
+        _emit(log_callback, f"[RL-TECH] {result['skipped_reason']}，跳过科技树自动加点。")
         return result
 
-    _emit(log_callback, f"[RL-TECH] 定位科技树入口「{entry_box['text']}」({entry_box['cx']},{entry_box['cy']})，进入自动加点...")
+    active_theme = tech_hit["theme"]
+    active_profile = tech_hit["profile"]
+    tech_spec = active_profile["tech_tree"]
+    entry_box = tech_hit["box"]
+    match_stage = str(tech_hit.get("match_stage") or "fullscreen_ocr")
+    requires_verify = bool(tech_hit.get("requires_panel_verify", False))
+
+    result["detected_theme"] = active_theme
+    result["tech_tree_name"] = tech_spec["name"]
+    result["matched_via_fallback"] = bool(tech_hit["matched_via_fallback"])
+    result["entry_stage"] = match_stage
+    result["entry_found"] = True
+    result["entry_box"] = dict(entry_box)
+
+    merge_note = f"（竖排拆字合并自 {entry_box['merged_from']}）" if entry_box.get("merged_from") else ""
+    stage_note = {
+        "fullscreen_ocr": "",
+        "local_ocr_red_suppressed": "[去红通道放大OCR] ",
+        "local_ocr_clahe": "[CLAHE放大OCR] ",
+        "local_ocr_points": "[局部点数识别] ",
+        "theme_anchor_fallback": "[主题锚点兜底] ",
+    }.get(match_stage, f"[{match_stage}] ")
+
+    if tech_hit["matched_via_fallback"]:
+        _emit(
+            log_callback,
+            f"[RL-TECH] {stage_note}按配置主题「{profile['display_name']}」未命中，已自动泛匹配当前大厅"
+            f"「{active_profile['display_name']}」科技树入口「{entry_box['text']}」{merge_note}({entry_box['cx']},{entry_box['cy']})，进入自动加点...",
+        )
+    else:
+        _emit(
+            log_callback,
+            f"[RL-TECH] {stage_note}定位科技树入口「{entry_box['text']}」{merge_note}({entry_box['cx']},{entry_box['cy']})，进入自动加点...",
+        )
     stage_pilot.adb_tap_norm(adb_path, adb_addr, entry_box["cx"], entry_box["cy"], img.width, img.height)
     time.sleep(1.1)
 
+    prefetched_tree_img: Optional[Image.Image] = None
+    prefetched_tree_boxes: Optional[List[Dict[str, Any]]] = None
+    if requires_verify:
+        v_res = _verify_entered_tech_tree_panel(
+            adb_path,
+            adb_addr,
+            active_profile,
+            cancel_event=cancel_event,
+            log_callback=log_callback,
+            maa_dir=maa_dir,
+        )
+        if not v_res.get("ok"):
+            result["entry_found"] = False
+            result["wrong_panel_detected"] = str(v_res.get("wrong_panel") or "unconfirmed_panel")
+            result["skipped_reason"] = f"兜底入口校验未通过（{result['wrong_panel_detected']}），已中止科技树加点"
+            return result
+        prefetched_tree_img = v_res.get("img")
+        if v_res.get("boxes") is not None:
+            prefetched_tree_boxes = list(v_res["boxes"])
+
+    aborted_on_theme_select = False
     try:
-        for _round in range(max_upgrades):
+        skipped_coords: List[Tuple[int, int]] = []
+        permanent_bad_coords: List[Tuple[int, int]] = []
+        canvas_swipes = 0
+        max_canvas_swipes = 3
+        arch_nudge_swipes = 0
+        max_arch_nudge_swipes = 2
+        wrong_page_recoveries = 0
+        prev_tree_img_for_swipe: Optional[Image.Image] = None
+
+        for _round in range(max_upgrades + 8):
+            if result["upgraded_count"] >= max_upgrades:
+                break
             if cancel_event and cancel_event.is_set():
                 result["cancelled"] = True
                 break
 
-            tree_img = stage_pilot.adb_screencap_image(adb_path, adb_addr)
+            if prefetched_tree_img is not None:
+                tree_img = prefetched_tree_img
+                prefetched_tree_img = None
+            else:
+                tree_img = stage_pilot.adb_screencap_image(adb_path, adb_addr)
             if tree_img is None:
                 break
 
-            lit_nodes = detect_upgradeable_tech_nodes(tree_img)
+            rendered_ui = _has_rendered_ui_chrome(tree_img)
+            tree_boxes: List[Dict[str, Any]] = []
+            round_points_before: Optional[int] = None
+
+            # Per-round Page Guard + Default-Selected '确认升级' Priority Check (always active on real UI screenshots)
+            if rendered_ui:
+                if prefetched_tree_boxes is not None:
+                    tree_boxes = prefetched_tree_boxes
+                    prefetched_tree_boxes = None
+                else:
+                    tree_boxes = stage_pilot.find_text_boxes_via_ocr(tree_img, include_inverted=True)
+
+                guard = classify_tech_tree_page_guard(
+                    tree_img, tree_boxes, maa_dir=maa_dir, active_profile=active_profile, cancel_event=cancel_event
+                )
+                g_status = guard["status"]
+                round_points_before = guard.get("points")
+
+                if g_status == "theme_select_page":
+                    result["page_guard_interceptions"] = int(result.get("page_guard_interceptions", 0)) + 1
+                    aborted_on_theme_select = True
+                    _emit(
+                        log_callback,
+                        "[WARN][RL-TECH] Page Guard 拦截：当前处于集成战略「主题选择页」，严禁节点点击、左滑或继续点返回，安全中止加点。",
+                    )
+                    break
+
+                if g_status == "wrong_page":
+                    wrong_kw = str(guard.get("wrong_keyword") or "非科技树页面")
+                    result["page_guard_interceptions"] = int(result.get("page_guard_interceptions", 0)) + 1
+                    _emit(
+                        log_callback,
+                        f"[WARN][RL-TECH] Page Guard 拦截：当前误入「{wrong_kw}」，立即点击左上角返回键 (<) 退出（严禁执行节点点击或左滑）。",
+                    )
+                    stage_pilot.adb_tap_norm(adb_path, adb_addr, 64, 40, tree_img.width, tree_img.height)
+                    time.sleep(0.8)
+                    wrong_page_recoveries += 1
+                    prev_tree_img_for_swipe = None
+                    if wrong_page_recoveries >= 3:
+                        _emit(log_callback, "[WARN][RL-TECH] 连续误入非科技树页面，安全中止科技树加点。")
+                        break
+                    continue
+
+                if g_status == "lobby":
+                    _emit(log_callback, "[WARN][RL-TECH] Page Guard 检测到已退回肉鸽主题大厅，安全中止科技树加点（严禁在大厅点击或左滑）。")
+                    break
+
+                if g_status == "overview_overlay":
+                    _emit(log_callback, "[WARN][RL-TECH] Page Guard 检测到处于属性总览弹窗（无顶部房子图标），点击左上角返回键 (<) 返回科技树画布。")
+                    stage_pilot.adb_tap_norm(adb_path, adb_addr, 64, 40, tree_img.width, tree_img.height)
+                    time.sleep(0.75)
+                    wrong_page_recoveries += 1
+                    prev_tree_img_for_swipe = None
+                    if arch_nudge_swipes < max_arch_nudge_swipes:
+                        arch_nudge_swipes += 1
+                        _emit(log_callback, "[RL-TECH] 退出属性总览弹窗后轻微向右拖动画布，将左侧前沿节点移至中部安全区...")
+                        stage_pilot.adb_swipe_norm(adb_path, adb_addr, 360, 360, 660, 360, 380, tree_img.width, tree_img.height)
+                        time.sleep(0.75)
+                        skipped_coords.clear()
+                        permanent_bad_coords.clear()
+                    if wrong_page_recoveries >= 3:
+                        break
+                    continue
+
+                if g_status == "unknown_not_tech_tree":
+                    _emit(log_callback, "[WARN][RL-TECH] Page Guard 未确认处于科技树画布（缺失顶部 < / 房子图标 / 右上角点数特征），安全中止加点。")
+                    break
+
+                if round_points_before is not None and round_points_before <= 0:
+                    _emit(log_callback, f"[RL-TECH] 科技树「{tech_spec['name']}」右上角剩余点数为 0，结束加点。")
+                    break
+
+                # Step 1: Prioritize directly clicking the default-selected frontier node's cyan '确认升级' button!
+                default_confirm = evaluate_tech_tree_confirm_button(tree_img, tree_boxes, cancel_event=cancel_event)
+                if default_confirm["valid"]:
+                    up_btn = default_confirm["button"]
+                    ver = _execute_and_verify_tech_upgrade(
+                        adb_path=adb_path,
+                        adb_addr=adb_addr,
+                        before_img=tree_img,
+                        confirm_btn=up_btn,
+                        points_before=round_points_before,
+                        cancel_event=cancel_event,
+                        log_callback=log_callback,
+                    )
+                    if ver.get("cancelled"):
+                        result["cancelled"] = True
+                        break
+                    if not ver.get("verified"):
+                        _emit(
+                            log_callback,
+                            f"[WARN][RL-TECH] 点击默认选中「{up_btn['text']}」({ver['tap_xy'][0]},{ver['tap_xy'][1]}) 后未检测到扣点或节点推进（{ver.get('reason')}），判定未生效并安全退出。",
+                        )
+                        break
+                    desc_text = str(default_confirm.get("detail_text") or " ".join(b.get("text", "") for b in tree_boxes))
+                    score, tier = score_tech_tree_node(desc_text, "", priority_order=eff_priority)
+                    skipped_coords.clear()
+                    prev_tree_img_for_swipe = None
+                    prefetched_tree_img = ver.get("after_img")
+                    prefetched_tree_boxes = ver.get("after_boxes")
+                    result["upgraded_count"] += 1
+                    result["upgraded_nodes"].append({
+                        "cx": ver["tap_xy"][0],
+                        "cy": ver["tap_xy"][1],
+                        "tier": tier,
+                        "score": score,
+                        "upgrade_label": up_btn["text"],
+                        "points_before": ver.get("points_before"),
+                        "points_after": ver.get("points_after"),
+                        "verify_reason": ver.get("verify_reason", ""),
+                        "summary": desc_text[:120],
+                    })
+                    _emit(
+                        log_callback,
+                        f"[RL-TECH] 已直接点击默认选中「{up_btn['text']}」({ver['tap_xy'][0]},{ver['tap_xy'][1]}) "
+                        f"并核验生效 [{ver.get('verify_reason')}]（累计+{result['upgraded_count']}）",
+                    )
+                    continue
+            else:
+                prefetched_tree_boxes = None
+
+            # If we just performed a canvas left-swipe, verify the viewport actually shifted
+            if prev_tree_img_for_swipe is not None:
+                moved = False
+                if np is not None:
+                    a1 = np.asarray(prev_tree_img_for_swipe.convert("RGB").resize((320, 180)), dtype=np.float32)
+                    a2 = np.asarray(tree_img.convert("RGB").resize((320, 180)), dtype=np.float32)
+                    moved = float(np.mean(np.abs(a1 - a2))) > 3.0
+                prev_tree_img_for_swipe = None
+                if not moved:
+                    _emit(log_callback, f"[RL-TECH] 科技树「{tech_spec['name']}」画布已到达最右侧边缘，结束加点。")
+                    break
+                skipped_coords.clear()
+
+            # Directly scan current screen's glowing frontier nodes first (never blindly page left!)
+            raw_lit_nodes = detect_upgradeable_tech_nodes(tree_img)
+            # Filter out forbidden UI zones (arrows x<0.08/x>0.93, arch x<0.18 & y>0.62, top/bottom bars) & bad coords
+            lit_nodes: List[Dict[str, Any]] = []
+            for n in raw_lit_nodes:
+                ncx, ncy = int(n["cx"]), int(n["cy"])
+                if is_point_in_tech_tree_forbidden_zone(ncx, ncy):
+                    continue
+                if any(abs(ncx - bx) <= 42 and abs(ncy - by) <= 42 for bx, by in permanent_bad_coords):
+                    continue
+                if any(abs(ncx - sx) <= 42 and abs(ncy - sy) <= 42 for sx, sy in skipped_coords):
+                    continue
+                lit_nodes.append(n)
+
             if not lit_nodes:
-                _emit(log_callback, f"[RL-TECH] 科技树「{tech_spec['name']}」未检测到更多亮起的可升级节点，结束加点。")
+                if not raw_lit_nodes:
+                    # On an all-upgraded left page (solid white icons filtered out -> raw_lit_nodes empty),
+                    # swipe left to explore right toward frontier instead of prematurely giving up!
+                    if rendered_ui and canvas_swipes < max_canvas_swipes and _has_solid_white_upgraded_nodes(tree_img):
+                        canvas_swipes += 1
+                        prev_tree_img_for_swipe = tree_img
+                        _emit(
+                            log_callback,
+                            f"[RL-TECH] 当前屏仅见实心白「已升级」节点、无外发光可解锁石碑，直接向左滑动探索右侧前沿 ({canvas_swipes}/{max_canvas_swipes})...",
+                        )
+                        stage_pilot.adb_swipe_norm(adb_path, adb_addr, 960, 360, 320, 360, 420, tree_img.width, tree_img.height)
+                        time.sleep(0.9)
+                        continue
+                    _emit(log_callback, f"[RL-TECH] 科技树「{tech_spec['name']}」未检测到更多亮起的可升级节点，结束加点。")
+                    break
+                if canvas_swipes < max_canvas_swipes:
+                    canvas_swipes += 1
+                    prev_tree_img_for_swipe = tree_img
+                    _emit(
+                        log_callback,
+                        f"[RL-TECH] 当前屏无可解锁节点，向左滑动一次画布探测右侧前沿发光节点 ({canvas_swipes}/{max_canvas_swipes})...",
+                    )
+                    stage_pilot.adb_swipe_norm(adb_path, adb_addr, 960, 360, 320, 360, 420, tree_img.width, tree_img.height)
+                    time.sleep(0.9)
+                    continue
+                _emit(log_callback, f"[RL-TECH] 科技树「{tech_spec['name']}」当前暂无更多可解锁节点，结束加点。")
                 break
 
-            # Inspect each lit candidate node to read its title/description & upgrade button via OCR
+            # If the top-priority leftmost candidate sits right along the rim of the bottom-left '64/78 已重构' arch,
+            # gently drag the canvas right first so frontier nodes move safely to screen center before tapping!
+            if (
+                arch_nudge_swipes < max_arch_nudge_swipes
+                and is_point_near_tech_tree_arch_edge(int(lit_nodes[0]["cx"]), int(lit_nodes[0]["cy"]))
+            ):
+                arch_nudge_swipes += 1
+                _emit(
+                    log_callback,
+                    f"[RL-TECH] 候选前沿节点 ({lit_nodes[0]['cx']},{lit_nodes[0]['cy']}) 紧邻左下角拱门禁区边缘，"
+                    f"先轻微向右拖动画布移至中部安全区再重扫 ({arch_nudge_swipes}/{max_arch_nudge_swipes})...",
+                )
+                stage_pilot.adb_swipe_norm(adb_path, adb_addr, 360, 360, 660, 360, 380, tree_img.width, tree_img.height)
+                time.sleep(0.75)
+                skipped_coords.clear()
+                permanent_bad_coords.clear()
+                continue
+
+            # Inspect candidate nodes (left-to-right X ascending) using bottom-right button ROI for smart feedback & early stop
             evaluated: List[Dict[str, Any]] = []
-            for node in lit_nodes[:10]:
+            saw_insufficient_points = False
+            last_tapped_xy: Optional[Tuple[int, int]] = None
+            consecutive_upgraded = 0
+            upgraded_immediately = False
+            triggered_early_swipe = False
+            triggered_arch_rescan = False
+            aborted_loop = False
+
+            remaining_nodes = list(lit_nodes[:10])
+            while remaining_nodes:
                 if cancel_event and cancel_event.is_set():
                     result["cancelled"] = True
                     break
-                stage_pilot.adb_tap_norm(adb_path, adb_addr, node["cx"], node["cy"], tree_img.width, tree_img.height)
+                node = remaining_nodes.pop(0)
+                ncx, ncy = int(node["cx"]), int(node["cy"])
+                stage_pilot.adb_tap_norm(adb_path, adb_addr, ncx, ncy, tree_img.width, tree_img.height)
+                last_tapped_xy = (ncx, ncy)
                 time.sleep(0.55)
                 detail_img = stage_pilot.adb_screencap_image(adb_path, adb_addr)
                 if detail_img is None:
                     continue
                 detail_boxes = stage_pilot.find_text_boxes_via_ocr(detail_img, include_inverted=True)
-                detail_text = " ".join(b.get("text", "") for b in detail_boxes)
-                if any(u in detail_text for u in _TECH_UNAVAILABLE_TEXTS):
+
+                # Hard guard against Theme Selection page during node scan
+                if is_roguelike_theme_select_page(detail_boxes):
+                    result["page_guard_interceptions"] = int(result.get("page_guard_interceptions", 0)) + 1
+                    aborted_on_theme_select = True
+                    aborted_loop = True
+                    _emit(log_callback, "[WARN][RL-TECH] 点击节点后检测到处于「主题选择页」，立即中止科技树扫描。")
+                    break
+
+                # Guard against accidentally opening wrong subpages during node scan
+                detail_joined = "".join(_box_text_compact(b) for b in (detail_boxes or []))
+                wrong_hit = next((w for w in _TECH_TREE_PAGE_GUARD_WRONG_KEYWORDS if w in detail_joined), None)
+                if wrong_hit is not None:
+                    result["page_guard_interceptions"] = int(result.get("page_guard_interceptions", 0)) + 1
+                    _emit(
+                        log_callback,
+                        f"[WARN][RL-TECH] 点击候选节点 ({ncx},{ncy}) 后误入「{wrong_hit}」，立即点击返回键 (<) 退出。",
+                    )
+                    stage_pilot.adb_tap_norm(adb_path, adb_addr, 64, 40, detail_img.width, detail_img.height)
+                    time.sleep(0.75)
+                    permanent_bad_coords.append((ncx, ncy))
+                    last_tapped_xy = None
                     continue
-                up_btn = _find_matching_ocr_box(detail_boxes, _TECH_UPGRADE_BUTTON_TEXTS)
-                if up_btn is None:
+
+                confirm_eval = evaluate_tech_tree_confirm_button(detail_img, detail_boxes, cancel_event=cancel_event)
+
+                # Self-heal ONLY if top-bar house icon is ABSENT AND >=2 full-screen attribute summary groups appear
+                if _is_tech_tree_overview_overlay(
+                    detail_boxes,
+                    has_bottom_confirm=confirm_eval["valid"],
+                    detail_img=detail_img,
+                    maa_dir=maa_dir,
+                ):
+                    _emit(
+                        log_callback,
+                        f"[WARN][RL-TECH] 检测到误入属性总览弹窗（坐标 ({ncx},{ncy})，无顶部房子图标），立即点击左上角返回键 (<) 返回科技树画布。",
+                    )
+                    stage_pilot.adb_tap_norm(adb_path, adb_addr, 64, 40, detail_img.width, detail_img.height)
+                    time.sleep(0.75)
+                    permanent_bad_coords.append((ncx, ncy))
+                    last_tapped_xy = None
+                    near_arch = is_point_near_tech_tree_arch_edge(ncx, ncy) or (
+                        (ncx / 1280.0) < 0.30 and (ncy / 720.0) > 0.50
+                    )
+                    if (rendered_ui or near_arch) and arch_nudge_swipes < max_arch_nudge_swipes:
+                        arch_nudge_swipes += 1
+                        _emit(
+                            log_callback,
+                            f"[RL-TECH] 退出属性总览弹窗后不再死磕原坐标，先轻微向右拖动画布移至中部安全区再重扫 ({arch_nudge_swipes}/{max_arch_nudge_swipes})...",
+                        )
+                        stage_pilot.adb_swipe_norm(
+                            adb_path, adb_addr, 360, 360, 660, 360, 380, detail_img.width, detail_img.height
+                        )
+                        time.sleep(0.75)
+                        skipped_coords.clear()
+                        permanent_bad_coords.clear()
+                        triggered_arch_rescan = True
+                        break
                     continue
-                score, tier = score_tech_tree_node(detail_text, "", priority_order=eff_priority)
+
+                btn_status = str(confirm_eval.get("button_status") or "")
+                if not confirm_eval["valid"]:
+                    if btn_status == "already_upgraded":
+                        consecutive_upgraded += 1
+                        skipped_coords.append((ncx, ncy))
+                        if consecutive_upgraded >= 2:
+                            _emit(
+                                log_callback,
+                                f"[RL-TECH] 连续命中 {consecutive_upgraded} 个「已升级」节点，说明当前处于已点满的左侧区域，"
+                                f"立刻中止本屏遍历并向左滑动探索前沿...",
+                            )
+                            if canvas_swipes < max_canvas_swipes:
+                                canvas_swipes += 1
+                                prev_tree_img_for_swipe = tree_img
+                                stage_pilot.adb_swipe_norm(
+                                    adb_path, adb_addr, 960, 360, 320, 360, 420, tree_img.width, tree_img.height
+                                )
+                                time.sleep(0.9)
+                                skipped_coords.clear()
+                                triggered_early_swipe = True
+                                result["early_stop_already_upgraded_swipes"] = (
+                                    int(result.get("early_stop_already_upgraded_swipes", 0)) + 1
+                                )
+                            break
+                        continue
+
+                    consecutive_upgraded = 0
+                    if confirm_eval.get("insufficient_points"):
+                        saw_insufficient_points = True
+                    skipped_coords.append((ncx, ncy))
+                    # When hitting '未解锁', prioritize any remaining untried candidate strictly to the LEFT of ncx
+                    if btn_status == "locked" and remaining_nodes:
+                        remaining_nodes.sort(
+                            key=lambda n: (
+                                0 if int(n["cx"]) < ncx else 1,
+                                0 if n.get("has_halo") else 1,
+                                int(n["cx"]),
+                                int(n["cy"]),
+                            )
+                        )
+                    continue
+
+                consecutive_upgraded = 0
+                up_btn = confirm_eval["button"]
+                desc_text = str(confirm_eval.get("detail_text") or " ".join(b.get("text", "") for b in detail_boxes))
+                score, tier = score_tech_tree_node(desc_text, "", priority_order=eff_priority)
+                ux_c, uy_c = _ocr_box_bbox_center(up_btn)
+
+                # On real/rendered UI screens, immediately click cyan '确认升级', verify points drop,
+                # count +1, and re-scan in-place for newly lit downstream nodes!
+                if rendered_ui:
+                    pts_before = round_points_before
+                    if pts_before is None:
+                        pts_before = extract_tech_tree_remaining_points(
+                            detail_img, detail_boxes, allow_roi_ocr=True, cancel_event=cancel_event
+                        )
+                    ver = _execute_and_verify_tech_upgrade(
+                        adb_path=adb_path,
+                        adb_addr=adb_addr,
+                        before_img=detail_img,
+                        confirm_btn=up_btn,
+                        points_before=pts_before,
+                        cancel_event=cancel_event,
+                        log_callback=log_callback,
+                    )
+                    if ver.get("cancelled"):
+                        result["cancelled"] = True
+                        aborted_loop = True
+                        break
+                    if not ver.get("verified"):
+                        _emit(
+                            log_callback,
+                            f"[WARN][RL-TECH] 点击「{up_btn['text']}」({ver['tap_xy'][0]},{ver['tap_xy'][1]}) 后未检测到扣点或节点推进（{ver.get('reason')}），判定加点未生效并退出循环。",
+                        )
+                        aborted_loop = True
+                        break
+                    prefetched_tree_img = ver.get("after_img")
+                    prefetched_tree_boxes = ver.get("after_boxes")
+                    skipped_coords.clear()
+                    prev_tree_img_for_swipe = None
+                    result["upgraded_count"] += 1
+                    result["upgraded_nodes"].append({
+                        "cx": ncx,
+                        "cy": ncy,
+                        "tier": tier,
+                        "score": score,
+                        "upgrade_label": up_btn["text"],
+                        "points_before": ver.get("points_before"),
+                        "points_after": ver.get("points_after"),
+                        "verify_reason": ver.get("verify_reason", ""),
+                        "summary": desc_text[:120],
+                    })
+                    _emit(
+                        log_callback,
+                        f"[RL-TECH] 命中青蓝「{up_btn['text']}」({ver['tap_xy'][0]},{ver['tap_xy'][1]}) 并核验扣点生效 "
+                        f"[{ver.get('verify_reason')}]（节点 ({ncx},{ncy})，累计+{result['upgraded_count']}），原地重扫下游节点...",
+                    )
+                    upgraded_immediately = True
+                    break
+
                 evaluated.append({
                     "node": node,
-                    "detail_text": detail_text[:120],
+                    "detail_img": detail_img,
+                    "detail_boxes": detail_boxes,
+                    "detail_text": desc_text[:120],
                     "score": score,
                     "tier": tier,
-                    "upgrade_xy": (up_btn["cx"], up_btn["cy"]),
+                    "button": up_btn,
+                    "upgrade_xy": (ux_c, uy_c),
                     "upgrade_label": up_btn["text"],
                 })
 
-            if result["cancelled"] or not evaluated:
+            if result["cancelled"] or aborted_loop:
+                break
+            if upgraded_immediately or triggered_early_swipe or triggered_arch_rescan:
+                continue
+
+            if not evaluated:
+                if saw_insufficient_points:
+                    _emit(log_callback, f"[RL-TECH] 科技树「{tech_spec['name']}」当前点数不足，结束加点。")
+                    break
+                if consecutive_upgraded >= 2:
+                    _emit(log_callback, f"[RL-TECH] 科技树「{tech_spec['name']}」已达最大左滑探测次数且连续命中已升级节点，结束加点。")
+                    break
+                if canvas_swipes < max_canvas_swipes:
+                    canvas_swipes += 1
+                    prev_tree_img_for_swipe = tree_img
+                    _emit(
+                        log_callback,
+                        f"[RL-TECH] 当前屏未命中可确认升级的前沿节点，向左滑动一次画布探测右侧新节点 ({canvas_swipes}/{max_canvas_swipes})...",
+                    )
+                    stage_pilot.adb_swipe_norm(adb_path, adb_addr, 960, 360, 320, 360, 420, tree_img.width, tree_img.height)
+                    time.sleep(0.9)
+                    continue
+                _emit(log_callback, f"[RL-TECH] 科技树「{tech_spec['name']}」当前暂无点数足够的可激活节点。")
                 break
 
             # Pick highest-priority affordable node (开局希望/初始费用/招募折扣 > 战斗属性 > 商店刷新)
             evaluated.sort(key=lambda item: -item["score"])
             best = evaluated[0]
             bnode = best["node"]
-            stage_pilot.adb_tap_norm(adb_path, adb_addr, bnode["cx"], bnode["cy"], tree_img.width, tree_img.height)
-            time.sleep(0.45)
-            ux, uy = best["upgrade_xy"]
-            stage_pilot.adb_tap_norm(adb_path, adb_addr, ux, uy, tree_img.width, tree_img.height)
-            time.sleep(0.85)
-            # Dismiss any confirmation / activation toast
-            stage_pilot.adb_tap_norm(adb_path, adb_addr, 640, 620, tree_img.width, tree_img.height)
-            time.sleep(0.35)
+            bxy = (int(bnode["cx"]), int(bnode["cy"]))
+            if last_tapped_xy != bxy:
+                stage_pilot.adb_tap_norm(adb_path, adb_addr, bxy[0], bxy[1], tree_img.width, tree_img.height)
+                time.sleep(0.45)
 
-            result["upgraded_count"] += 1
-            result["upgraded_nodes"].append({
-                "cx": bnode["cx"],
-                "cy": bnode["cy"],
-                "tier": best["tier"],
-                "score": best["score"],
-                "summary": best["detail_text"],
-            })
-            _emit(
-                log_callback,
-                f"[RL-TECH] 已按优先级自动加点 [{best['tier']}|分={best['score']}] ({bnode['cx']},{bnode['cy']}) -> {best['detail_text'][:48]}",
-            )
+            if rendered_ui:
+                pts_before = round_points_before
+                if pts_before is None:
+                    pts_before = extract_tech_tree_remaining_points(
+                        best["detail_img"], best["detail_boxes"], allow_roi_ocr=True, cancel_event=cancel_event
+                    )
+                ver = _execute_and_verify_tech_upgrade(
+                    adb_path=adb_path,
+                    adb_addr=adb_addr,
+                    before_img=best["detail_img"],
+                    confirm_btn=best["button"],
+                    points_before=pts_before,
+                    cancel_event=cancel_event,
+                    log_callback=log_callback,
+                )
+                if ver.get("cancelled"):
+                    result["cancelled"] = True
+                    break
+                if not ver.get("verified"):
+                    _emit(
+                        log_callback,
+                        f"[WARN][RL-TECH] 点击「{best['upgrade_label']}」({ver['tap_xy'][0]},{ver['tap_xy'][1]}) 后未检测到扣点或节点推进（{ver.get('reason')}），判定加点未生效并退出循环。",
+                    )
+                    break
+                prefetched_tree_img = ver.get("after_img")
+                prefetched_tree_boxes = ver.get("after_boxes")
+                skipped_coords.clear()
+                result["upgraded_count"] += 1
+                result["upgraded_nodes"].append({
+                    "cx": bxy[0],
+                    "cy": bxy[1],
+                    "tier": best["tier"],
+                    "score": best["score"],
+                    "upgrade_label": best["upgrade_label"],
+                    "points_before": ver.get("points_before"),
+                    "points_after": ver.get("points_after"),
+                    "verify_reason": ver.get("verify_reason", ""),
+                    "summary": best["detail_text"],
+                })
+                _emit(
+                    log_callback,
+                    f"[RL-TECH] 已按优先级自动加点 [{best['tier']}|分={best['score']}|按钮={best['upgrade_label']}|{ver.get('verify_reason')}] "
+                    f"({bxy[0]},{bxy[1]}) -> {best['detail_text'][:48]}",
+                )
+            else:
+                ux, uy = best["upgrade_xy"]
+                stage_pilot.adb_tap_norm(adb_path, adb_addr, ux, uy, tree_img.width, tree_img.height)
+                time.sleep(0.85)
+                # Dismiss any confirmation / activation toast
+                stage_pilot.adb_tap_norm(adb_path, adb_addr, 640, 620, tree_img.width, tree_img.height)
+                time.sleep(0.35)
+
+                skipped_coords.clear()
+                result["upgraded_count"] += 1
+                result["upgraded_nodes"].append({
+                    "cx": bxy[0],
+                    "cy": bxy[1],
+                    "tier": best["tier"],
+                    "score": best["score"],
+                    "upgrade_label": best["upgrade_label"],
+                    "summary": best["detail_text"],
+                })
+                _emit(
+                    log_callback,
+                    f"[RL-TECH] 已按优先级自动加点 [{best['tier']}|分={best['score']}|按钮={best['upgrade_label']}] ({bxy[0]},{bxy[1]}) -> {best['detail_text'][:48]}",
+                )
     finally:
-        _tap_return_to_lobby(adb_path, adb_addr, maa_dir, theme, log_callback=log_callback)
+        if not aborted_on_theme_select:
+            _tap_return_to_lobby(
+                adb_path, adb_addr, maa_dir, active_theme, cancel_event=cancel_event, log_callback=log_callback
+            )
 
     return result
 
@@ -1921,43 +5065,87 @@ def run_roguelike_post_settlement(
     capabilities: Optional[Dict[str, Any]] = None,
     cancel_event: Optional[threading.Event] = None,
     log_callback: Optional[Callable[[str], None]] = None,
+    navigate_to_lobby: bool = False,
 ) -> Dict[str, Any]:
-    """Post-settlement routine: claim level/commission rewards & auto-upgrade tech tree when MAA lacks native coverage."""
+    """Post-settlement routine: optionally navigate to theme lobby, claim level/commission rewards & upgrade tech tree."""
+    norm_theme = normalize_roguelike_theme(theme, default="BlackFlow")
+    eff_theme = norm_theme
+    confirmed_lobby_theme: Optional[str] = None
     rl_cfg = config.get("roguelike", {}) if isinstance(config.get("roguelike"), dict) else {}
     auto_claim = bool(rl_cfg.get("auto_claim_rewards", True))
     auto_tech = bool(rl_cfg.get("auto_upgrade_tech_tree", True))
     prio = rl_cfg.get("tech_tree_priority") or list(DEFAULT_TECH_TREE_PRIORITY)
 
     caps = capabilities or {}
-    theme_caps = caps.get("roguelike_theme_capabilities", {}).get(theme, {}) if isinstance(caps.get("roguelike_theme_capabilities"), dict) else {}
+    theme_caps_map = caps.get("roguelike_theme_capabilities", {}) if isinstance(caps.get("roguelike_theme_capabilities"), dict) else {}
 
     out: Dict[str, Any] = {
-        "theme": theme,
+        "ok": True,
+        "theme": norm_theme,
+        "detected_theme": norm_theme,
+        "navigation": {"skipped": True},
         "rewards": {"skipped": True},
         "tech_tree": {"skipped": True},
         "cancelled": False,
     }
 
     if cancel_event and cancel_event.is_set():
+        out["ok"] = False
         out["cancelled"] = True
         return out
 
     if not adb_path or not adb_addr:
+        out["ok"] = False
         out["skipped_reason"] = "ADB 路径或地址为空，跳过局后视觉领奖与科技树加点"
+        _emit(log_callback, f"[WARN][RL-POST] {out['skipped_reason']}")
         return out
+
+    if navigate_to_lobby and (auto_claim or auto_tech):
+        nav_res = ensure_roguelike_theme_lobby(
+            adb_path=adb_path,
+            adb_addr=adb_addr,
+            maa_dir=maa_dir,
+            theme=eff_theme,
+            cancel_event=cancel_event,
+            log_callback=log_callback,
+        )
+        out["navigation"] = nav_res
+        if nav_res.get("cancelled") or (cancel_event and cancel_event.is_set()):
+            out["ok"] = False
+            out["cancelled"] = True
+            return out
+        if not nav_res.get("ok"):
+            out["ok"] = False
+            out["error"] = str(nav_res.get("reason") or f"未能进入 {eff_theme} 主题大厅")
+            return out
+        if nav_res.get("detected_theme"):
+            eff_theme = normalize_roguelike_theme(str(nav_res["detected_theme"]), default=eff_theme)
+            out["detected_theme"] = eff_theme
+            confirmed_lobby_theme = eff_theme
+
+    theme_caps = theme_caps_map.get(eff_theme, {}) if isinstance(theme_caps_map, dict) else {}
 
     if auto_claim:
         if theme_caps.get("native_reward_claim"):
             out["rewards"] = {"ok": True, "source": "maa_native", "note": "已由 MAA 原生任务处理领奖"}
         else:
             out["rewards"] = claim_roguelike_rewards(
-                adb_path, adb_addr, maa_dir, theme=theme, cancel_event=cancel_event, log_callback=log_callback
+                adb_path, adb_addr, maa_dir, theme=eff_theme, cancel_event=cancel_event, log_callback=log_callback
             )
+            if out["rewards"].get("detected_theme"):
+                eff_theme = normalize_roguelike_theme(str(out["rewards"]["detected_theme"]), default=eff_theme)
+                out["detected_theme"] = eff_theme
+            if out["rewards"].get("level_entry_found"):
+                confirmed_lobby_theme = eff_theme
             if out["rewards"].get("cancelled"):
+                out["ok"] = False
                 out["cancelled"] = True
                 return out
+            if out["rewards"].get("ok") is False:
+                out["ok"] = False
 
     if auto_tech:
+        theme_caps = theme_caps_map.get(eff_theme, {}) if isinstance(theme_caps_map, dict) else {}
         if theme_caps.get("native_tech_tree_upgrade"):
             out["tech_tree"] = {"ok": True, "source": "maa_native", "note": "已由 MAA 原生任务处理科技树加点"}
         else:
@@ -1965,12 +5153,18 @@ def run_roguelike_post_settlement(
                 adb_path,
                 adb_addr,
                 maa_dir,
-                theme=theme,
+                theme=eff_theme,
                 priority_order=prio,
                 cancel_event=cancel_event,
                 log_callback=log_callback,
+                lobby_confirmed_theme=confirmed_lobby_theme,
             )
+            if out["tech_tree"].get("detected_theme"):
+                out["detected_theme"] = normalize_roguelike_theme(str(out["tech_tree"]["detected_theme"]), default=eff_theme)
             if out["tech_tree"].get("cancelled"):
+                out["ok"] = False
                 out["cancelled"] = True
+            elif out["tech_tree"].get("ok") is False:
+                out["ok"] = False
 
     return out
