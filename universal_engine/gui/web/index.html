@@ -141,6 +141,16 @@
         <circle cx="14.5" cy="7.5" r="1.2" fill="currentColor" stroke="none"/>
         <circle cx="16.5" cy="11.5" r="1.2" fill="currentColor" stroke="none"/>
       </symbol>
+      <symbol id="icon-shield" viewBox="0 0 24 24">
+        <path d="M12 3l8 3v6c0 4.5-3.2 8.2-8 9-4.8-.8-8-4.5-8-9V6l8-3z" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round" fill="none"/>
+        <path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      </symbol>
+      <symbol id="icon-toolbox" viewBox="0 0 24 24">
+        <rect x="2" y="7" width="20" height="14" rx="2" stroke="currentColor" stroke-width="1.75" fill="none"/>
+        <path d="M16 7V4a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v3" stroke="currentColor" stroke-width="1.75" fill="none"/>
+        <line x1="2" y1="13" x2="22" y2="13" stroke="currentColor" stroke-width="1.75"/>
+        <rect x="10" y="11" width="4" height="4" rx="1" stroke="currentColor" stroke-width="1.75" fill="none"/>
+      </symbol>
     </defs>
   </svg>
 
@@ -172,6 +182,8 @@
             <span class="status-dot agent" id="dot-ai"></span>
             <span id="text-ai-mode">桌面 Agent 协同</span>
           </div>
+          <!-- Dry-Run Warning Pill -->
+          <button type="button" class="status-pill status-pill-dry-run hidden" id="top-pill-dry-run" title="演习模式已开启，点击前往设置关闭"><svg class="icon icon-sm"><use href="#icon-shield"/></svg><span id="text-dry-run-badge">演习模式 · 只看不点</span></button>
         </div>
       </div>
 
@@ -250,6 +262,10 @@
           <li class="nav-item" data-page="page-exploration">
             <svg class="icon"><use href="#icon-compass"/></svg>
             <span>肉鸽与生息</span>
+          </li>
+          <li class="nav-item" data-page="page-toolbox">
+            <svg class="icon"><use href="#icon-toolbox"/></svg>
+            <span>小工具 · 牛杂</span>
           </li>
           <li class="nav-item" data-page="page-terminal">
             <svg class="icon"><use href="#icon-terminal"/></svg>
@@ -571,6 +587,54 @@
                   <svg class="icon"><use href="#icon-play"/></svg>
                   <span id="btn-toggle-ra-text">启动生息演算</span>
                 </button>
+              </div>
+            </div>
+          </section>
+
+          <!-- Page 5: 小工具 · 牛杂 -->
+          <section class="page" id="page-toolbox">
+            <div class="toolbox-split">
+              <!-- Left: Tool Categories & Master List -->
+              <aside class="toolbox-sidebar">
+                <div class="toolbox-sidebar-header">
+                  <span class="toolbox-sidebar-title">功能列表</span>
+                  <button class="icon-btn" id="btn-refresh-toolbox" title="刷新目录" aria-label="刷新目录">
+                    <svg class="icon icon-sm"><use href="#icon-refresh"/></svg>
+                  </button>
+                </div>
+                <div class="toolbox-nav-list" id="toolbox-nav-list"></div>
+              </aside>
+
+              <!-- Right: Detail Card & Config Area -->
+              <div class="toolbox-detail" id="toolbox-detail-card">
+                <div class="toolbox-detail-header">
+                  <div class="toolbox-detail-title-group">
+                    <span class="card-icon-badge" id="toolbox-detail-icon-badge">
+                      <svg class="icon" id="toolbox-detail-icon"><use href="#icon-toolbox"/></svg>
+                    </span>
+                    <span class="toolbox-detail-title" id="toolbox-detail-title">选择工具</span>
+                    <span class="card-badge" id="toolbox-detail-badge">常驻功能</span>
+                    <span class="card-badge badge-maa" id="toolbox-maa-chip">MAA v6.23.2+</span>
+                  </div>
+                </div>
+
+                <div class="toolbox-detail-scroll">
+                  <div class="toolbox-detail-summary" id="toolbox-detail-summary">
+                    请从左侧列表选择一个小工具以查看说明和参数配置。
+                  </div>
+                  <div class="toolbox-notices-box hidden" id="toolbox-notices-box"></div>
+                  <div class="toolbox-params-container" id="toolbox-params-container"></div>
+                </div>
+
+                <div class="toolbox-detail-footer">
+                  <button class="btn btn-primary" id="btn-start-toolbox">
+                    <svg class="icon"><use href="#icon-play"/></svg>
+                    <span id="btn-start-toolbox-text">启动任务</span>
+                  </button>
+                  <button class="btn btn-outlined hidden" id="btn-toolbox-secondary">
+                    <span id="btn-toolbox-secondary-text">辅助操作</span>
+                  </button>
+                </div>
               </div>
             </div>
           </section>
@@ -999,6 +1063,20 @@
                   </label>
                 </div>
               </div>
+            </div>
+          </div>
+
+          <div class="m3-settings-group">
+            <div class="m3-group-label">安全演习与离线调试</div>
+            <div class="m3-group-list">
+              <label class="m3-setting-item switch-label">
+                <span class="m3-setting-text">
+                  <span class="m3-setting-title">演习模式（Dry-Run · 只看不点）</span>
+                  <span class="m3-setting-desc">仅拉取真实画面并输出拟下发 JSON 参数与标注图，全面拦截点击/滑动/任务下发/Webhook 与关机动作；仅当前会话生效，重启后自动关闭。</span>
+                </span>
+                <input type="checkbox" class="switch-input" id="set-sw-dry-run">
+                <span class="switch-track"><span class="switch-thumb"><svg class="switch-icon-on"><use href="#icon-check"/></svg><svg class="switch-icon-off"><use href="#icon-minus"/></svg></span></span>
+              </label>
             </div>
           </div>
 

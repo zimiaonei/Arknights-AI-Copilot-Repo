@@ -1401,7 +1401,7 @@ class RealDeviceRoguelikeRegressionTests(unittest.TestCase):
         self.assertLessEqual(nodes[0]["cx"], nodes[1]["cx"])
         self.assertLessEqual(nodes[1]["cx"], nodes[2]["cx"])
 
-    def test_two_consecutive_already_upgraded_nodes_early_stop_swipe_left_and_chain_upgrade(self):
+    def test_all_upgraded_page_finishes_full_screen_scan_before_swipe_left_and_chain_upgrade(self):
         lobby_img = Image.new("RGB", (1280, 720), (20, 24, 32))
         # Page 1 (all-upgraded left region) & Page 2 (frontier page — visually distinct so swipe-movement check passes!)
         page1_img = _make_realistic_tech_tree_screen(with_home_icon=True, with_return_icon=True, bottom_btn_mode="none")
@@ -1414,7 +1414,7 @@ class RealDeviceRoguelikeRegressionTests(unittest.TestCase):
         page2_cyan_2 = _make_realistic_tech_tree_screen(with_home_icon=True, with_return_icon=True, bottom_btn_mode="cyan_confirm")
         page2_after_2 = _make_realistic_tech_tree_screen(with_home_icon=True, with_return_icon=True, bottom_btn_mode="grey_locked")
 
-        # Page 1 has 6 candidates; after 2 consecutive '已升级' hits, MUST immediately abort Page 1 and swipe left!
+        # Page 1 has 6 candidates; NEVER early-stop after 2 '已升级' hits — must finish all 6 before swiping left!
         page1_candidates = [
             {"cx": 220, "cy": 260, "lit_pixels": 300, "has_halo": True},
             {"cx": 220, "cy": 420, "lit_pixels": 300, "has_halo": True},
@@ -1424,7 +1424,7 @@ class RealDeviceRoguelikeRegressionTests(unittest.TestCase):
             {"cx": 500, "cy": 420, "lit_pixels": 300, "has_halo": True},
         ]
         lit_seq = [
-            page1_candidates,                                           # Round 0 (Page 1): 6 nodes, stops after #2!
+            page1_candidates,                                           # Round 0 (Page 1): all 6 nodes scanned
             [{"cx": 540, "cy": 340, "lit_pixels": 300, "has_halo": True}],  # Round 1 (Page 2): frontier node 1
             [{"cx": 700, "cy": 340, "lit_pixels": 300, "has_halo": True}],  # Round 2 (Page 2 in-place rescan): newly lit downstream node 2!
             [],                                                         # Round 3: done!
@@ -1432,8 +1432,12 @@ class RealDeviceRoguelikeRegressionTests(unittest.TestCase):
         screen_images = [
             lobby_img,               # Lobby entry scan
             page1_img,               # Round 0: Page 1 canvas
-            page1_upgraded_detail,   # Tap node #1 (220, 260) -> 已升级 (1/2)
-            page1_upgraded_detail,   # Tap node #2 (220, 420) -> 已升级 (2/2 -> EARLY STOP + SWIPE LEFT!)
+            page1_upgraded_detail,   # Tap node #1 (220, 260) -> 已升级
+            page1_upgraded_detail,   # Tap node #2 (220, 420) -> 已升级 (must continue!)
+            page1_upgraded_detail,   # Tap node #3 (360, 260) -> 已升级
+            page1_upgraded_detail,   # Tap node #4 (360, 420) -> 已升级
+            page1_upgraded_detail,   # Tap node #5 (500, 260) -> 已升级
+            page1_upgraded_detail,   # Tap node #6 (500, 420) -> 已升级 -> full screen finished, SWIPE LEFT!
             page2_img,               # Round 1: Page 2 canvas (viewport moved!)
             page2_cyan_1,            # Tap frontier node (540, 340) -> cyan 确认升级 x3
             page2_after_1,           # After confirm #1 -> points 32 -> 29 (prefetched into Round 2!)
@@ -1448,7 +1452,11 @@ class RealDeviceRoguelikeRegressionTests(unittest.TestCase):
             [{"text": "历史重构", "compact": "历史重构", "cx": 134, "cy": 306}],
             pts32,                                                                           # Round 0 Page Guard
             pts32 + [{"text": "已升级", "compact": "已升级", "cx": 1110, "cy": 668}],        # Node #1 -> 已升级
-            pts32 + [{"text": "已升级", "compact": "已升级", "cx": 1110, "cy": 668}],        # Node #2 -> 已升级 -> EARLY STOP!
+            pts32 + [{"text": "已升级", "compact": "已升级", "cx": 1110, "cy": 668}],        # Node #2 -> 已升级
+            pts32 + [{"text": "已升级", "compact": "已升级", "cx": 1110, "cy": 668}],        # Node #3 -> 已升级
+            pts32 + [{"text": "已升级", "compact": "已升级", "cx": 1110, "cy": 668}],        # Node #4 -> 已升级
+            pts32 + [{"text": "已升级", "compact": "已升级", "cx": 1110, "cy": 668}],        # Node #5 -> 已升级
+            pts32 + [{"text": "已升级", "compact": "已升级", "cx": 1110, "cy": 668}],        # Node #6 -> 已升级
             pts32,                                                                           # Round 1 Page Guard (Page 2)
             pts32 + [{"text": "开局希望+2", "compact": "开局希望+2", "cx": 520, "cy": 650}, {"text": "确认升级 x3", "compact": "确认升级x3", "x": 1040, "y": 648, "w": 140, "h": 40, "cx": 1110, "cy": 668}],
             pts29 + [{"text": "已升级", "compact": "已升级", "cx": 1110, "cy": 668}],        # Post-upgrade #1: 32 -> 29!
@@ -1474,19 +1482,18 @@ class RealDeviceRoguelikeRegressionTests(unittest.TestCase):
                 )
 
         self.assertTrue(res["ok"])
-        self.assertEqual(res.get("early_stop_already_upgraded_swipes"), 1)
         self.assertEqual(res["upgraded_count"], 2)
         self.assertEqual(res["upgraded_nodes"][0]["points_before"], 32)
         self.assertEqual(res["upgraded_nodes"][0]["points_after"], 29)
         self.assertEqual(res["upgraded_nodes"][1]["points_before"], 29)
         self.assertEqual(res["upgraded_nodes"][1]["points_after"], 26)
-        # Page 1 nodes #3..#6 were NEVER tapped (early stop after 2 consecutive '已升级'!)
-        for skipped_xy in ((360, 260), (360, 420), (500, 260), (500, 420)):
-            self.assertNotIn(skipped_xy, taps, f"Early stop failed: tapped Page 1 node {skipped_xy}")
-        # Exactly 1 leftward swipe (x1=960 -> x2=320) to explore frontier
+        # All 6 Page 1 candidates were evaluated (no premature early-stop after 2 '已升级' hits)
+        for p1_xy in ((220, 260), (220, 420), (360, 260), (360, 420), (500, 260), (500, 420)):
+            self.assertIn(p1_xy, taps, f"Expected full-screen scan to check Page 1 node {p1_xy}")
+        # Exactly 1 leftward swipe (x1=960 -> x2=320) after full Page 1 traversal
         self.assertEqual(len(swipes), 1)
         self.assertGreater(swipes[0][2], swipes[0][4], f"Expected leftward swipe (x1 > x2), got {swipes[0]}")
-        self.assertTrue(any("连续命中 2 个「已升级」节点" in ln for ln in logs))
+        self.assertTrue(any("整屏候选节点遍历完毕" in ln for ln in logs))
 
         # 2) Also verify '未解锁' skips and prioritizes untried candidates strictly to the LEFT of the locked node
         locked_detail = _make_realistic_tech_tree_screen(with_home_icon=True, with_return_icon=True, bottom_btn_mode="grey_locked")
@@ -1524,6 +1531,616 @@ class RealDeviceRoguelikeRegressionTests(unittest.TestCase):
         # After (720, 340) returned '未解锁', MUST immediately jump LEFT to (460, 340) rather than right (880, 340)!
         self.assertIn((460, 340), taps_lo)
         self.assertNotIn((880, 340), taps_lo)
+
+    def test_bottom_row_small_square_nodes_detected_and_arch_edge_small_node_nudged_before_click(self):
+        def _draw_small_square_frontier_node(
+            draw: ImageDraw.ImageDraw,
+            cx: int,
+            cy: int,
+            half_size: int = 11,
+            with_left_white_line: bool = False,
+        ) -> None:
+            if with_left_white_line:
+                draw.line([(cx - half_size - 36, cy), (cx - half_size - 1, cy)], fill=(238, 240, 244), width=3)
+            draw.rectangle(
+                (cx - half_size - 3, cy - half_size - 3, cx + half_size + 3, cy + half_size + 3),
+                fill=(246, 246, 248),
+            )
+            draw.rectangle(
+                (cx - half_size, cy - half_size, cx + half_size, cy + half_size),
+                fill=(96, 98, 104),
+            )
+            draw.rectangle((cx - 4, cy - 4, cx + 4, cy + 4), outline=(144, 146, 152), width=1)
+
+        # 1) Refined arch forbidden zone preserves bottom-row arch-adjacent small node (242, 542)
+        #    while keeping existing arch coordinates (154, 468) and (220, 460) strictly forbidden
+        self.assertFalse(roguelike_ai_copilot.is_point_in_tech_tree_forbidden_zone(242, 542))
+        self.assertTrue(roguelike_ai_copilot.is_point_near_tech_tree_arch_edge(242, 542))
+        self.assertTrue(roguelike_ai_copilot.is_point_in_tech_tree_forbidden_zone(154, 468))
+        self.assertTrue(roguelike_ai_copilot.is_point_in_tech_tree_forbidden_zone(220, 460))
+
+        canvas = _make_realistic_tech_tree_screen(with_home_icon=True, with_return_icon=True, bottom_btn_mode="none")
+        _draw_warm_white_background_flare(canvas, cx=540, cy=200, radius=105)
+        draw = ImageDraw.Draw(canvas)
+
+        # Positive targets: 1 large tablet + 3 bottom-row small square glowing nodes
+        _draw_glowing_frontier_tablet(draw, 560, 290, half_w=26, half_h=32, with_left_white_line=True)
+        _draw_small_square_frontier_node(draw, 242, 542, half_size=11, with_left_white_line=False)
+        _draw_small_square_frontier_node(draw, 420, 550, half_size=11, with_left_white_line=True)
+        _draw_small_square_frontier_node(draw, 680, 558, half_size=11, with_left_white_line=True)
+
+        # Negative controls: forbidden 64/78 arch, solid pure-white upgraded small square, dark locked small square
+        _draw_glowing_frontier_tablet(draw, 140, 510, half_w=42, half_h=50, with_left_white_line=False)
+        draw.rectangle((320 - 14, 550 - 14, 320 + 14, 550 + 14), fill=(246, 246, 248))
+        draw.rectangle((840 - 11, 550 - 11, 840 + 11, 550 + 11), fill=(68, 70, 74), outline=(84, 86, 92), width=2)
+
+        nodes = roguelike_ai_copilot.detect_upgradeable_tech_nodes(canvas)
+        self.assertEqual(len(nodes), 4, f"Expected 1 large tablet + 3 small squares, got {nodes}")
+
+        expected_targets = [
+            (242, 542, "small_square"),
+            (420, 550, "small_square"),
+            (560, 290, "large_tablet"),
+            (680, 558, "small_square"),
+        ]
+        for exp_x, exp_y, exp_cls in expected_targets:
+            matched = [n for n in nodes if abs(n["cx"] - exp_x) <= 14 and abs(n["cy"] - exp_y) <= 14]
+            self.assertEqual(len(matched), 1, f"Missing target ({exp_x},{exp_y}) in {nodes}")
+            self.assertEqual(matched[0].get("node_size_class"), exp_cls)
+
+        for bad_x, bad_y in ((140, 510), (320, 550), (840, 550), (540, 200)):
+            self.assertFalse(
+                any(abs(n["cx"] - bad_x) <= 28 and abs(n["cy"] - bad_y) <= 28 for n in nodes),
+                f"Unexpected false positive near ({bad_x},{bad_y}): {nodes}",
+            )
+
+        # 2) End-to-end: non-0th arch-edge small node (242, 542) triggers rightward drag before tapping!
+        lobby_img = Image.new("RGB", (1280, 720), (20, 24, 32))
+        tree_before_nudge = _make_realistic_tech_tree_screen(with_home_icon=True, with_return_icon=True, bottom_btn_mode="none")
+        locked_detail = _make_realistic_tech_tree_screen(with_home_icon=True, with_return_icon=True, bottom_btn_mode="grey_locked")
+        tree_after_nudge = _make_realistic_tech_tree_screen(with_home_icon=True, with_return_icon=True, bottom_btn_mode="none")
+        detail_cyan = _make_realistic_tech_tree_screen(with_home_icon=True, with_return_icon=True, bottom_btn_mode="cyan_confirm")
+        tree_after_upgrade = _make_realistic_tech_tree_screen(with_home_icon=True, with_return_icon=True, bottom_btn_mode="grey_locked")
+
+        lit_seq = [
+            [
+                {"cx": 420, "cy": 280, "lit_pixels": 300, "has_halo": True},
+                {"cx": 242, "cy": 542, "lit_pixels": 120, "has_halo": True, "node_size_class": "small_square"},
+            ],
+            [
+                {"cx": 542, "cy": 542, "lit_pixels": 120, "has_halo": True, "node_size_class": "small_square"},
+            ],
+            [],
+        ]
+        imgs = [lobby_img, tree_before_nudge, locked_detail, tree_after_nudge, detail_cyan, tree_after_upgrade, lobby_img]
+        pts32 = [{"text": "32", "compact": "32", "cx": 1150, "cy": 48}, {"text": "64/78 已重构", "compact": "64/78已重构", "cx": 128, "cy": 618}]
+        pts30 = [{"text": "30", "compact": "30", "cx": 1150, "cy": 48}, {"text": "65/78 已重构", "compact": "65/78已重构", "cx": 128, "cy": 618}]
+        ocr_seq = [
+            [{"text": "历史重构", "compact": "历史重构", "cx": 134, "cy": 306}],
+            pts32,
+            pts32 + [{"text": "未解锁", "compact": "未解锁", "cx": 1110, "cy": 668}],
+            pts32,
+            pts32 + [{"text": "我方单位生命值 +5%", "compact": "我方单位生命值+5%", "cx": 520, "cy": 650}, {"text": "确认升级 x2", "compact": "确认升级x2", "x": 1040, "y": 648, "w": 140, "h": 40, "cx": 1110, "cy": 668}],
+            pts30 + [{"text": "已升级", "compact": "已升级", "cx": 1110, "cy": 668}],
+            [{"text": "开始探险", "compact": "开始探险", "cx": 1060, "cy": 610}],
+        ]
+        img_it = iter(imgs)
+        ocr_it = iter(ocr_seq)
+        taps = []
+        swipes = []
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(stage_pilot, "adb_screencap_image", side_effect=lambda *a, **kw: next(img_it, lobby_img)), \
+                 patch.object(roguelike_ai_copilot, "detect_upgradeable_tech_nodes", side_effect=lit_seq), \
+                 patch.object(stage_pilot, "find_text_boxes_via_ocr", side_effect=lambda *a, **kw: next(ocr_it, [])), \
+                 patch.object(stage_pilot, "adb_tap_norm", side_effect=lambda a, b, x, y, *r, **kw: taps.append((x, y)) or True), \
+                 patch.object(stage_pilot, "adb_swipe_norm", side_effect=lambda *a, **kw: swipes.append(a) or True), \
+                 patch("time.sleep"):
+                res = roguelike_ai_copilot.auto_upgrade_roguelike_tech_tree(
+                    "adb.exe", "127.0.0.1:16384", Path(tmp), theme="Sarkaz"
+                )
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["upgraded_count"], 1)
+        self.assertNotIn((242, 542), taps)
+        self.assertIn((542, 542), taps)
+        self.assertEqual(len(swipes), 1)
+        self.assertLess(swipes[0][2], swipes[0][4])
+
+    def test_continuous_spending_chain_across_multiple_pages_until_points_unaffordable_at_right_edge(self):
+        def _draw_small_sq(draw: ImageDraw.ImageDraw, cx: int, cy: int, state: str) -> None:
+            if state == "upgraded":
+                draw.rectangle((cx - 14, cy - 14, cx + 14, cy + 14), fill=(246, 246, 248))
+            elif state == "frontier":
+                draw.line([(cx - 46, cy), (cx - 12, cy)], fill=(238, 240, 244), width=3)
+                draw.rectangle((cx - 14, cy - 14, cx + 14, cy + 14), fill=(246, 246, 248))
+                draw.rectangle((cx - 11, cy - 11, cx + 11, cy + 11), fill=(96, 98, 104))
+            else:
+                draw.rectangle((cx - 11, cy - 11, cx + 11, cy + 11), fill=(68, 70, 74), outline=(84, 86, 92), width=2)
+
+        def _run_stateful_tree(initial_points: int, pages_nodes: dict):
+            state = {
+                "screen": "lobby",
+                "page": 0,
+                "points": initial_points,
+                "upgraded": set(),
+                "selected": None,
+            }
+            page_bg = {0: (24, 28, 38), 1: (52, 62, 78), 2: (84, 72, 92)}
+            max_page = max(pages_nodes.keys())
+            taps = []
+            swipes = []
+            logs = []
+
+            def _node_status(node_def: dict) -> str:
+                if node_def["id"] in state["upgraded"]:
+                    return "upgraded"
+                if all(req in state["upgraded"] for req in node_def["reqs"]):
+                    return "frontier"
+                return "locked"
+
+            def _render_screen() -> Image.Image:
+                if state["screen"] == "lobby":
+                    return Image.new("RGB", (1280, 720), (20, 24, 32))
+                sel = state["selected"]
+                btn_mode = "none"
+                if sel is not None:
+                    nd = next(n for n in pages_nodes[state["page"]] if n["id"] == sel)
+                    st_nd = _node_status(nd)
+                    if st_nd == "frontier" and state["points"] >= nd["cost"]:
+                        btn_mode = "cyan_confirm"
+                    else:
+                        btn_mode = "grey_locked"
+                img = _make_realistic_tech_tree_screen(with_home_icon=True, with_return_icon=True, bottom_btn_mode=btn_mode)
+                draw = ImageDraw.Draw(img)
+                draw.rectangle((112, 124, 1180, 572), fill=page_bg.get(state["page"], (24, 28, 38)))
+                for nd in pages_nodes[state["page"]]:
+                    st_nd = _node_status(nd)
+                    cx, cy = nd["cx"], nd["cy"]
+                    if nd["kind"] == "small":
+                        _draw_small_sq(draw, cx, cy, st_nd)
+                    elif st_nd == "upgraded":
+                        draw.rounded_rectangle((cx - 26, cy - 32, cx + 26, cy + 32), radius=8, fill=(246, 246, 248))
+                    elif st_nd == "frontier":
+                        _draw_glowing_frontier_tablet(draw, cx, cy, with_left_white_line=True)
+                    else:
+                        _draw_dark_locked_tablet(draw, cx, cy)
+                return img
+
+            def _ocr_screen(im: Image.Image, *args, **kwargs):
+                if state["screen"] == "lobby":
+                    return [
+                        {"text": "开始探险", "compact": "开始探险", "cx": 1060, "cy": 610},
+                        {"text": "历史重构", "compact": "历史重构", "cx": 134, "cy": 306},
+                    ]
+                boxes = [
+                    {"text": str(state["points"]), "compact": str(state["points"]), "cx": 1150, "cy": 48},
+                    {"text": "64/78 已重构", "compact": "64/78已重构", "cx": 128, "cy": 618},
+                ]
+                sel = state["selected"]
+                if sel is not None:
+                    nd = next(n for n in pages_nodes[state["page"]] if n["id"] == sel)
+                    st_nd = _node_status(nd)
+                    if st_nd == "upgraded":
+                        boxes.append({"text": "已升级", "compact": "已升级", "cx": 1110, "cy": 668})
+                    elif st_nd == "locked":
+                        boxes.append({"text": "未解锁", "compact": "未解锁", "cx": 1110, "cy": 668})
+                    elif nd.get("grey_confirm_label") and state["points"] < nd["cost"]:
+                        lbl = f"确认升级 x{nd['cost']}"
+                        boxes.append({"text": lbl, "compact": lbl.replace(" ", ""), "x": 1040, "y": 648, "w": 140, "h": 40, "cx": 1110, "cy": 668})
+                    elif state["points"] < nd["cost"]:
+                        boxes.append({"text": "点数不足", "compact": "点数不足", "cx": 1110, "cy": 668})
+                    else:
+                        lbl = f"确认升级 x{nd['cost']}"
+                        boxes.append({"text": nd["desc"], "compact": nd["desc"], "cx": 520, "cy": 650})
+                        boxes.append({"text": lbl, "compact": lbl.replace(" ", ""), "x": 1040, "y": 648, "w": 140, "h": 40, "cx": 1110, "cy": 668})
+                return boxes
+
+            def _tap(a, b, x, y, *r, **kw):
+                taps.append((x, y))
+                if state["screen"] == "lobby":
+                    if abs(x - 134) <= 20 and abs(y - 306) <= 20:
+                        state["screen"] = "tech_tree"
+                        state["page"] = 0
+                        state["selected"] = None
+                    return True
+                if abs(x - 64) <= 20 and abs(y - 40) <= 20:
+                    state["screen"] = "lobby"
+                    state["selected"] = None
+                    return True
+                if 1020 <= x <= 1250 and 620 <= y <= 705 and state["selected"] is not None:
+                    nd = next(n for n in pages_nodes[state["page"]] if n["id"] == state["selected"])
+                    if _node_status(nd) == "frontier" and state["points"] >= nd["cost"]:
+                        state["points"] -= nd["cost"]
+                        state["upgraded"].add(nd["id"])
+                        state["selected"] = None
+                    return True
+                for nd in pages_nodes[state["page"]]:
+                    if abs(x - nd["cx"]) <= 28 and abs(y - nd["cy"]) <= 28:
+                        state["selected"] = nd["id"]
+                        break
+                return True
+
+            def _swipe(*args, **kwargs):
+                swipes.append(args)
+                if state["screen"] == "tech_tree":
+                    x1, x2 = args[2], args[4]
+                    if x1 > x2:
+                        state["selected"] = None
+                        state["page"] = min(max_page, state["page"] + 1)
+                return True
+
+            with tempfile.TemporaryDirectory() as tmp:
+                with patch.object(stage_pilot, "adb_screencap_image", side_effect=lambda *a, **kw: _render_screen()), \
+                     patch.object(stage_pilot, "find_text_boxes_via_ocr", side_effect=_ocr_screen), \
+                     patch.object(stage_pilot, "adb_tap_norm", side_effect=_tap), \
+                     patch.object(stage_pilot, "adb_swipe_norm", side_effect=_swipe), \
+                     patch("time.sleep"):
+                    res = roguelike_ai_copilot.auto_upgrade_roguelike_tech_tree(
+                        "adb.exe", "127.0.0.1:16384", Path(tmp), theme="Sarkaz", log_callback=logs.append
+                    )
+            return res, taps, swipes, logs
+
+        # Sub-case A: 35 points across 3 pages (9 upgrades: 4+3+2 on P0, 5+5+4+4 on P1, 4+3 on P2 -> 1 pt left)
+        pages_35 = {
+            0: [
+                {"id": "p0_root", "cx": 380, "cy": 320, "kind": "large", "cost": 4, "reqs": (), "desc": "开局希望+1"},
+                {"id": "p0_mid", "cx": 540, "cy": 320, "kind": "large", "cost": 3, "reqs": ("p0_root",), "desc": "初始费用+2"},
+                {"id": "p0_small", "cx": 540, "cy": 544, "kind": "small", "cost": 2, "reqs": ("p0_root",), "desc": "我方单位生命值+5%"},
+                {"id": "p0_exp", "cx": 760, "cy": 240, "kind": "large", "cost": 30, "reqs": (), "desc": "商店刷新+1"},
+            ],
+            1: [
+                {"id": "p1_a", "cx": 380, "cy": 280, "kind": "large", "cost": 5, "reqs": (), "desc": "开局希望+2"},
+                {"id": "p1_b", "cx": 540, "cy": 280, "kind": "large", "cost": 5, "reqs": ("p1_a",), "desc": "招募消耗-1"},
+                {"id": "p1_c", "cx": 720, "cy": 280, "kind": "large", "cost": 4, "reqs": ("p1_b",), "desc": "我方单位攻击力+8%"},
+                {"id": "p1_d", "cx": 720, "cy": 548, "kind": "small", "cost": 4, "reqs": ("p1_b",), "desc": "我方单位防御力+8%"},
+            ],
+            2: [
+                {"id": "p2_a", "cx": 420, "cy": 320, "kind": "large", "cost": 4, "reqs": (), "desc": "开局希望+1"},
+                {"id": "p2_small", "cx": 600, "cy": 548, "kind": "small", "cost": 3, "reqs": ("p2_a",), "desc": "我方单位攻击力+5%"},
+                {"id": "p2_final", "cx": 780, "cy": 320, "kind": "large", "cost": 3, "reqs": ("p2_small",), "desc": "商店刷新+1", "grey_confirm_label": True},
+            ],
+        }
+        res_a, _, swipes_a, logs_a = _run_stateful_tree(35, pages_35)
+        self.assertTrue(res_a["ok"])
+        self.assertEqual(res_a["upgraded_count"], 9)
+        self.assertEqual(res_a["remaining_points"], 1)
+        self.assertEqual(res_a["exit_reason"], "insufficient_points_all_frontiers")
+        self.assertEqual(len(swipes_a), 4)
+        self.assertTrue(any("本次升级 9 项" in ln and "剩余点数=1" in ln for ln in logs_a))
+
+        # Sub-case B: 6 points -> 2 chained 3-pt nodes -> points_exhausted at 0 with 0 swipes
+        pages_6 = {
+            0: [
+                {"id": "b1", "cx": 420, "cy": 320, "kind": "large", "cost": 3, "reqs": (), "desc": "开局希望+1"},
+                {"id": "b2", "cx": 580, "cy": 320, "kind": "large", "cost": 3, "reqs": ("b1",), "desc": "我方单位生命值+5%"},
+            ]
+        }
+        res_b, _, swipes_b, _ = _run_stateful_tree(6, pages_6)
+        self.assertTrue(res_b["ok"])
+        self.assertEqual(res_b["upgraded_count"], 2)
+        self.assertEqual(res_b["remaining_points"], 0)
+        self.assertEqual(res_b["exit_reason"], "points_exhausted")
+        self.assertEqual(len(swipes_b), 0)
+
+    def test_left_upgraded_nodes_do_not_early_stop_skipping_right_unlockable_steles(self):
+        # Part A: Visual detector rejects dark/colored already-upgraded large steles with right-side white lines
+        # while reliably detecting & prioritizing right-half unlockable nodes (1 large + 2 small with right black wires).
+        canvas = _make_realistic_tech_tree_screen(with_home_icon=True, with_return_icon=True, bottom_btn_mode="none")
+        draw = ImageDraw.Draw(canvas)
+
+        def _draw_upgraded_patterned_stele(cx: int, cy: int) -> None:
+            # Outgoing bright white line to the right (signature of already-upgraded node)
+            draw.line([(cx + 27, cy), (cx + 72, cy)], fill=(240, 242, 246), width=4)
+            # White frame + dark-base colored pattern inside (already-upgraded large stele)
+            draw.rounded_rectangle((cx - 30, cy - 36, cx + 30, cy + 36), radius=8, fill=(242, 244, 248))
+            draw.rounded_rectangle((cx - 25, cy - 31, cx + 25, cy + 31), radius=5, fill=(24, 26, 32))
+            draw.rectangle((cx - 14, cy - 16, cx + 14, cy + 16), fill=(215, 130, 35))
+            draw.rectangle((cx - 6, cy - 8, cx + 6, cy + 8), fill=(246, 246, 248))
+
+        def _draw_unlockable_with_right_dark_wire(cx: int, cy: int, half_w: int, half_h: int) -> None:
+            draw.line([(cx - half_w - 44, cy), (cx - half_w - 1, cy)], fill=(238, 240, 244), width=3)
+            draw.line([(cx + half_w + 1, cy), (cx + half_w + 44, cy)], fill=(10, 11, 14), width=3)
+            draw.rounded_rectangle(
+                (cx - half_w - 4, cy - half_h - 4, cx + half_w + 4, cy + half_h + 4),
+                radius=6,
+                fill=(246, 246, 248),
+            )
+            draw.rounded_rectangle(
+                (cx - half_w, cy - half_h, cx + half_w, cy + half_h),
+                radius=4,
+                fill=(98, 100, 106),
+            )
+
+        # Left-half already-upgraded nodes (both solid white & dark-patterned with right white wires)
+        _draw_upgraded_patterned_stele(240, 260)
+        _draw_upgraded_patterned_stele(380, 360)
+        draw.rounded_rectangle((214, 398, 266, 458), radius=8, fill=(246, 246, 248))
+        draw.rounded_rectangle((354, 200, 406, 260), radius=8, fill=(246, 246, 248))
+
+        # Right-half unlockable nodes at x ≈ 0.57~0.60 (1 middle large stele + 2 small squares)
+        _draw_unlockable_with_right_dark_wire(740, 360, half_w=26, half_h=32)
+        _draw_unlockable_with_right_dark_wire(760, 230, half_w=11, half_h=11)
+        _draw_unlockable_with_right_dark_wire(760, 490, half_w=11, half_h=11)
+
+        detected = roguelike_ai_copilot.detect_upgradeable_tech_nodes(canvas)
+        for bad_x, bad_y in ((240, 260), (380, 360), (240, 428), (380, 230)):
+            self.assertFalse(
+                any(abs(n["cx"] - bad_x) <= 26 and abs(n["cy"] - bad_y) <= 26 for n in detected),
+                f"Upgraded stele near ({bad_x},{bad_y}) should be rejected: {detected}",
+            )
+        for exp_x, exp_y in ((740, 360), (760, 230), (760, 490)):
+            hits = [n for n in detected if abs(n["cx"] - exp_x) <= 16 and abs(n["cy"] - exp_y) <= 16]
+            self.assertEqual(len(hits), 1, f"Missing right-half unlockable node ({exp_x},{exp_y}) in {detected}")
+            self.assertEqual(hits[0].get("frontier_tier"), 0)
+
+        # Part B: End-to-end 72/78 screen: 4 left '已升级' hits MUST NOT early-stop before right-half 3 unlockable nodes!
+        lobby_img = Image.new("RGB", (1280, 720), (20, 24, 32))
+        tree_img = _make_realistic_tech_tree_screen(with_home_icon=True, with_return_icon=True, bottom_btn_mode="none")
+        upgraded_detail = _make_realistic_tech_tree_screen(with_home_icon=True, with_return_icon=True, bottom_btn_mode="grey_locked")
+        cyan_detail = _make_realistic_tech_tree_screen(with_home_icon=True, with_return_icon=True, bottom_btn_mode="cyan_confirm")
+        after_upgrade_img = _make_realistic_tech_tree_screen(with_home_icon=True, with_return_icon=True, bottom_btn_mode="grey_locked")
+
+        lit_seq = [
+            [
+                {"cx": 240, "cy": 240, "lit_pixels": 260, "has_halo": True},
+                {"cx": 240, "cy": 420, "lit_pixels": 260, "has_halo": True},
+                {"cx": 380, "cy": 240, "lit_pixels": 260, "has_halo": True},
+                {"cx": 380, "cy": 420, "lit_pixels": 260, "has_halo": True},
+                {"cx": 740, "cy": 360, "lit_pixels": 320, "has_halo": True, "node_size_class": "large_tablet"},
+                {"cx": 760, "cy": 230, "lit_pixels": 140, "has_halo": True, "node_size_class": "small_square"},
+                {"cx": 760, "cy": 490, "lit_pixels": 140, "has_halo": True, "node_size_class": "small_square"},
+            ],
+            [],
+        ]
+        imgs = [
+            lobby_img,
+            tree_img,
+            upgraded_detail,  # (240, 240) -> 已升级
+            upgraded_detail,  # (240, 420) -> 已升级 (must NOT early-stop!)
+            upgraded_detail,  # (380, 240) -> 已升级
+            upgraded_detail,  # (380, 420) -> 已升级
+            cyan_detail,      # (740, 360) -> 确认升级 x3
+            after_upgrade_img,
+            lobby_img,
+        ]
+        pts5 = [{"text": "5", "compact": "5", "cx": 1150, "cy": 48}, {"text": "72/78 已重构", "compact": "72/78已重构", "cx": 128, "cy": 618}]
+        pts2 = [{"text": "2", "compact": "2", "cx": 1150, "cy": 48}, {"text": "73/78 已重构", "compact": "73/78已重构", "cx": 128, "cy": 618}]
+        ocr_seq = [
+            [{"text": "历史重构", "compact": "历史重构", "cx": 134, "cy": 306}],
+            pts5,
+            pts5 + [{"text": "已升级", "compact": "已升级", "cx": 1110, "cy": 668}],
+            pts5 + [{"text": "已升级", "compact": "已升级", "cx": 1110, "cy": 668}],
+            pts5 + [{"text": "已升级", "compact": "已升级", "cx": 1110, "cy": 668}],
+            pts5 + [{"text": "已升级", "compact": "已升级", "cx": 1110, "cy": 668}],
+            pts5 + [{"text": "干员攻击力+8%", "compact": "干员攻击力+8%", "cx": 520, "cy": 650}, {"text": "确认升级 x3", "compact": "确认升级x3", "x": 1040, "y": 648, "w": 140, "h": 40, "cx": 1110, "cy": 668}],
+            pts2 + [{"text": "已升级", "compact": "已升级", "cx": 1110, "cy": 668}],
+            [{"text": "开始探险", "compact": "开始探险", "cx": 1060, "cy": 610}],
+        ]
+        img_it = iter(imgs)
+        ocr_it = iter(ocr_seq)
+        taps = []
+        swipes = []
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(stage_pilot, "adb_screencap_image", side_effect=lambda *a, **kw: next(img_it, lobby_img)), \
+                 patch.object(roguelike_ai_copilot, "detect_upgradeable_tech_nodes", side_effect=lit_seq), \
+                 patch.object(stage_pilot, "find_text_boxes_via_ocr", side_effect=lambda *a, **kw: next(ocr_it, [])), \
+                 patch.object(stage_pilot, "adb_tap_norm", side_effect=lambda a, b, x, y, *r, **kw: taps.append((x, y)) or True), \
+                 patch.object(stage_pilot, "adb_swipe_norm", side_effect=lambda *a, **kw: swipes.append(a) or True), \
+                 patch("time.sleep"):
+                res = roguelike_ai_copilot.auto_upgrade_roguelike_tech_tree(
+                    "adb.exe", "127.0.0.1:16384", Path(tmp), theme="Sarkaz"
+                )
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["upgraded_count"], 1)
+        self.assertEqual(res["remaining_points"], 2)
+        self.assertIn((740, 360), taps)
+        self.assertEqual(swipes, [])
+
+    def test_single_digit_5_points_skips_cost_8_large_stele_and_upgrades_cost_3_small_stele(self):
+        # Part A: evaluate_tech_tree_confirm_button rejects cost=8 when remaining_points=5 regardless of button color
+        cyan_img = _make_realistic_tech_tree_screen(with_home_icon=True, with_return_icon=True, bottom_btn_mode="cyan_confirm")
+        grey_img = _make_realistic_tech_tree_screen(with_home_icon=True, with_return_icon=True, bottom_btn_mode="grey_locked")
+        cost8_box = [{"text": "确认升级 x8", "compact": "确认升级x8", "x": 1040, "y": 648, "w": 140, "h": 40, "cx": 1110, "cy": 668}]
+        cost3_box = [{"text": "确认升级 x3", "compact": "确认升级x3", "x": 1040, "y": 648, "w": 140, "h": 40, "cx": 1110, "cy": 668}]
+
+        for btn_img in (grey_img, cyan_img):
+            ev_8 = roguelike_ai_copilot.evaluate_tech_tree_confirm_button(btn_img, cost8_box, remaining_points=5)
+            self.assertFalse(ev_8["valid"])
+            self.assertTrue(ev_8["insufficient_points"])
+            self.assertEqual(ev_8["button_status"], "insufficient_points")
+
+        ev_3 = roguelike_ai_copilot.evaluate_tech_tree_confirm_button(cyan_img, cost3_box, remaining_points=5)
+        self.assertTrue(ev_3["valid"])
+        self.assertEqual(ev_3["button_status"], "confirm_upgrade")
+
+        # Part B: End-to-end 72/78 screen with single-digit '5' points: skips 8-cost big stele & upgrades 3-cost small square!
+        lobby_img = Image.new("RGB", (1280, 720), (20, 24, 32))
+        tree_img = _make_realistic_tech_tree_screen(with_home_icon=True, with_return_icon=True, bottom_btn_mode="none")
+        after_upgrade_img = _make_realistic_tech_tree_screen(with_home_icon=True, with_return_icon=True, bottom_btn_mode="grey_locked")
+
+        lit_seq = [
+            [
+                {"cx": 740, "cy": 360, "lit_pixels": 320, "has_halo": True, "node_size_class": "large_tablet"},
+                {"cx": 760, "cy": 230, "lit_pixels": 140, "has_halo": True, "node_size_class": "small_square"},
+                {"cx": 760, "cy": 490, "lit_pixels": 140, "has_halo": True, "node_size_class": "small_square"},
+            ],
+            [
+                {"cx": 740, "cy": 360, "lit_pixels": 320, "has_halo": True, "node_size_class": "large_tablet"},
+                {"cx": 760, "cy": 490, "lit_pixels": 140, "has_halo": True, "node_size_class": "small_square"},
+            ],
+            [],
+        ]
+        imgs = [
+            lobby_img,
+            tree_img,
+            grey_img,           # Big stele (740, 360) costs 8 -> insufficient points
+            cyan_img,           # Small stele (760, 230) costs 3 -> affordable!
+            after_upgrade_img,  # Points 5 -> 2
+            grey_img,           # Remaining small stele (760, 490) costs 3 (> 2) -> skipped!
+            lobby_img,
+        ]
+        pts5 = [{"text": "5", "compact": "5", "cx": 1150, "cy": 48}, {"text": "72/78 已重构", "compact": "72/78已重构", "cx": 128, "cy": 618}]
+        pts2 = [{"text": "2", "compact": "2", "cx": 1150, "cy": 48}, {"text": "73/78 已重构", "compact": "73/78已重构", "cx": 128, "cy": 618}]
+        ocr_seq = [
+            [{"text": "历史重构", "compact": "历史重构", "cx": 134, "cy": 306}],
+            pts5,
+            pts5 + [{"text": "点数不足", "compact": "点数不足", "cx": 1110, "cy": 668}],
+            pts5 + [{"text": "我方单位生命值+5%", "compact": "我方单位生命值+5%", "cx": 520, "cy": 650}] + cost3_box,
+            pts2 + [{"text": "已升级", "compact": "已升级", "cx": 1110, "cy": 668}],
+            pts2 + cost3_box,
+            [{"text": "开始探险", "compact": "开始探险", "cx": 1060, "cy": 610}],
+        ]
+        img_it = iter(imgs)
+        ocr_it = iter(ocr_seq)
+        taps = []
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(stage_pilot, "adb_screencap_image", side_effect=lambda *a, **kw: next(img_it, lobby_img)), \
+                 patch.object(roguelike_ai_copilot, "detect_upgradeable_tech_nodes", side_effect=lit_seq), \
+                 patch.object(stage_pilot, "find_text_boxes_via_ocr", side_effect=lambda *a, **kw: next(ocr_it, [])), \
+                 patch.object(stage_pilot, "adb_tap_norm", side_effect=lambda a, b, x, y, *r, **kw: taps.append((x, y)) or True), \
+                 patch.object(stage_pilot, "adb_swipe_norm", return_value=True), \
+                 patch("time.sleep"):
+                res = roguelike_ai_copilot.auto_upgrade_roguelike_tech_tree(
+                    "adb.exe", "127.0.0.1:16384", Path(tmp), theme="Sarkaz"
+                )
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["upgraded_count"], 1)
+        self.assertEqual(res["remaining_points"], 2)
+        self.assertEqual(res["upgraded_nodes"][0]["cx"], 760)
+        self.assertEqual(res["upgraded_nodes"][0]["cy"], 230)
+        self.assertEqual(res["upgraded_nodes"][0]["points_before"], 5)
+        self.assertEqual(res["upgraded_nodes"][0]["points_after"], 2)
+        self.assertIn((740, 360), taps)
+        self.assertIn((760, 230), taps)
+        self.assertEqual(taps.count((1110, 668)), 1)
+
+    def test_post_swipe_page_guard_tolerates_single_digit_5_ocr_miss_and_dual_frame_rechecks(self):
+        sarkaz_prof = roguelike_ai_copilot.get_theme_ui_profile("Sarkaz")
+        full_tech_img = _make_realistic_tech_tree_screen(with_home_icon=True, with_return_icon=True, bottom_btn_mode="none")
+        no_home_img = _make_realistic_tech_tree_screen(with_home_icon=False, with_return_icon=True, bottom_btn_mode="none")
+        blank_img = _make_realistic_tech_tree_screen(with_home_icon=False, with_return_icon=False, bottom_btn_mode="none")
+        badge_72_78 = [{"text": "72/78 已重构", "compact": "72/78已重构", "cx": 128, "cy": 618}]
+
+        # Part A: Unit checks on classify_tech_tree_page_guard
+        with patch.object(stage_pilot, "find_text_boxes_via_ocr", return_value=[]):
+            # 1) Single-digit '5' missed, top '<' + house icon + '72/78 已重构' -> tech_tree!
+            g1 = roguelike_ai_copilot.classify_tech_tree_page_guard(full_tech_img, badge_72_78, None, sarkaz_prof)
+            self.assertEqual(g1["status"], "tech_tree")
+            # 2) Single-digit '5' missed AND house icon missed, top '<' + '72/78 已重构' -> tech_tree!
+            g2 = roguelike_ai_copilot.classify_tech_tree_page_guard(no_home_img, badge_72_78, None, sarkaz_prof)
+            self.assertEqual(g2["status"], "tech_tree")
+            # 3) Single-digit '5' missed AND '72/78' missed, top '<' + house icon -> tech_tree!
+            g3 = roguelike_ai_copilot.classify_tech_tree_page_guard(full_tech_img, [], None, sarkaz_prof)
+            self.assertEqual(g3["status"], "tech_tree")
+
+        # 4) Negative hard intercepts take priority even if tech-tree chrome exists
+        g_lobby = roguelike_ai_copilot.classify_tech_tree_page_guard(
+            full_tech_img,
+            [{"text": "开始探险", "compact": "开始探险", "cx": 1060, "cy": 610}, {"text": "蚀刻章套组", "compact": "蚀刻章套组", "cx": 160, "cy": 665}],
+            None,
+            sarkaz_prof,
+        )
+        self.assertEqual(g_lobby["status"], "lobby")
+        g_theme = roguelike_ai_copilot.classify_tech_tree_page_guard(
+            full_tech_img, [{"text": "进入主题", "compact": "进入主题", "cx": 1060, "cy": 620}], None, sarkaz_prof
+        )
+        self.assertEqual(g_theme["status"], "theme_select_page")
+        g_wrong = roguelike_ai_copilot.classify_tech_tree_page_guard(
+            full_tech_img, [{"text": "想象实体图鉴", "compact": "想象实体图鉴", "cx": 420, "cy": 320}], None, sarkaz_prof
+        )
+        self.assertEqual(g_wrong["status"], "wrong_page")
+
+        # Part B: End-to-end left-swipe where post-swipe Page 2 completely misses single-digit '5' OCR,
+        #         plus Frame 1 transition blank -> 0.6s dual-frame recheck -> Frame 2 valid tech tree -> upgrades!
+        lobby_img = Image.new("RGB", (1280, 720), (20, 24, 32))
+        page1_img = _make_realistic_tech_tree_screen(with_home_icon=True, with_return_icon=True, bottom_btn_mode="none")
+        page1_upgraded = _make_realistic_tech_tree_screen(with_home_icon=True, with_return_icon=True, bottom_btn_mode="grey_locked")
+        page2_img = _make_realistic_tech_tree_screen(with_home_icon=True, with_return_icon=True, bottom_btn_mode="none")
+        ImageDraw.Draw(page2_img).rectangle((220, 170, 1080, 520), fill=(48, 56, 72))
+        page2_cyan = _make_realistic_tech_tree_screen(with_home_icon=True, with_return_icon=True, bottom_btn_mode="cyan_confirm")
+        page2_after = _make_realistic_tech_tree_screen(with_home_icon=True, with_return_icon=True, bottom_btn_mode="grey_locked")
+
+        lit_seq_b = [
+            [{"cx": 260, "cy": 320, "lit_pixels": 260, "has_halo": True}],  # Page 1: 1 already-upgraded -> swipe left
+            [{"cx": 740, "cy": 360, "lit_pixels": 300, "has_halo": True}],  # Page 2 after recheck: unlockable!
+            [],
+        ]
+        # Attach distinct marker attribute / identity via id mapping for deterministic OCR
+        frames_b = [
+            lobby_img,
+            page1_img,
+            page1_upgraded,
+            blank_img,      # Post-swipe Frame 1: transient transition frame (triggers 0.6s recheck!)
+            page2_img,      # Post-swipe Frame 2: settled tech tree, single-digit '5' STILL missed by OCR!
+            page2_cyan,     # Tap (740, 360) -> 确认升级 x3
+            page2_after,    # After upgrade -> points=2
+            lobby_img,
+        ]
+        frame_tags = {
+            id(lobby_img): "lobby",
+            id(page1_img): "p1",
+            id(page1_upgraded): "p1_up",
+            id(blank_img): "blank",
+            id(page2_img): "p2_no_digit5",
+            id(page2_cyan): "p2_cyan",
+            id(page2_after): "p2_after",
+        }
+
+        def _ocr_b(im, *args, **kwargs):
+            if kwargs.get("roi") is not None:
+                return []  # Simulate top-right ROI OCR also missing single-digit '5' on Page 2
+            tag = frame_tags.get(id(im), "lobby")
+            if tag == "lobby":
+                return [{"text": "开始探险", "compact": "开始探险", "cx": 1060, "cy": 610}, {"text": "历史重构", "compact": "历史重构", "cx": 134, "cy": 306}]
+            if tag == "p1":
+                return badge_72_78
+            if tag == "p1_up":
+                return badge_72_78 + [{"text": "已升级", "compact": "已升级", "cx": 1110, "cy": 668}]
+            if tag == "blank":
+                return []
+            if tag == "p2_no_digit5":
+                return badge_72_78  # Single-digit '5' completely missing!
+            if tag == "p2_cyan":
+                return badge_72_78 + [
+                    {"text": "干员攻击力+8%", "compact": "干员攻击力+8%", "cx": 520, "cy": 650},
+                    {"text": "确认升级 x3", "compact": "确认升级x3", "x": 1040, "y": 648, "w": 140, "h": 40, "cx": 1110, "cy": 668},
+                ]
+            if tag == "p2_after":
+                return [{"text": "2", "compact": "2", "cx": 1150, "cy": 48}, {"text": "73/78 已重构", "compact": "73/78已重构", "cx": 128, "cy": 618}, {"text": "已升级", "compact": "已升级", "cx": 1110, "cy": 668}]
+            return []
+
+        fb_it = iter(frames_b)
+        sleeps_b = []
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(stage_pilot, "adb_screencap_image", side_effect=lambda *a, **kw: next(fb_it, lobby_img)), \
+                 patch.object(roguelike_ai_copilot, "detect_upgradeable_tech_nodes", side_effect=lit_seq_b), \
+                 patch.object(stage_pilot, "find_text_boxes_via_ocr", side_effect=_ocr_b), \
+                 patch.object(stage_pilot, "adb_tap_norm", return_value=True), \
+                 patch.object(stage_pilot, "adb_swipe_norm", return_value=True), \
+                 patch("time.sleep", side_effect=lambda s: sleeps_b.append(s)):
+                res_b = roguelike_ai_copilot.auto_upgrade_roguelike_tech_tree(
+                    "adb.exe", "127.0.0.1:16384", Path(tmp), theme="Sarkaz"
+                )
+        self.assertTrue(res_b["ok"])
+        self.assertNotEqual(res_b.get("exit_reason"), "unknown_not_tech_tree")
+        self.assertEqual(res_b["upgraded_count"], 1)
+        self.assertIn(0.6, sleeps_b)
+        self.assertTrue(any(s >= 0.8 for s in sleeps_b))
+
+        # Part C: 2 consecutive unrecognized frames exit cleanly with unknown_not_tech_tree after 0.6s recheck
+        frames_c = [lobby_img, blank_img, blank_img, lobby_img]
+        fc_it = iter(frames_c)
+        sleeps_c = []
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(stage_pilot, "adb_screencap_image", side_effect=lambda *a, **kw: next(fc_it, lobby_img)), \
+                 patch.object(stage_pilot, "find_text_boxes_via_ocr", side_effect=_ocr_b), \
+                 patch.object(stage_pilot, "adb_tap_norm", return_value=True), \
+                 patch("time.sleep", side_effect=lambda s: sleeps_c.append(s)):
+                res_c = roguelike_ai_copilot.auto_upgrade_roguelike_tech_tree(
+                    "adb.exe", "127.0.0.1:16384", Path(tmp), theme="Sarkaz"
+                )
+        self.assertEqual(res_c["exit_reason"], "unknown_not_tech_tree")
+        self.assertEqual(res_c["upgraded_count"], 0)
+        self.assertEqual(sleeps_c.count(0.6), 1)
 
 
 if __name__ == "__main__":

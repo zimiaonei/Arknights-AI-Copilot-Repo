@@ -94,6 +94,14 @@ def adb_screencap_image(
     cancel_event: Optional[threading.Event] = None,
 ) -> Optional[Image.Image]:
     """Capture current emulator screen into an RGB PIL.Image via ADB with short timeout & cancellation."""
+    from universal_engine.utils import runtime_guard as _rg
+
+    _hooks = _rg.get_adb_hooks()
+    if _hooks is not None:
+        _img = _hooks.screencap(adb_path, adb_addr, timeout=timeout, cancel_event=cancel_event)
+        if _img is not None:
+            _rg.set_last_captured_image(_img)
+        return _img
     if not adb_path or not adb_addr:
         return None
     if cancel_event and cancel_event.is_set():
@@ -161,6 +169,14 @@ def adb_tap_norm(
     cancel_event: Optional[threading.Event] = None,
 ) -> bool:
     """Tap a normalized 1280x720 coordinate on the connected ADB device."""
+    from universal_engine.utils import runtime_guard as _rg
+
+    _hooks = _rg.get_adb_hooks()
+    if _hooks is not None:
+        return bool(_hooks.tap(adb_path, adb_addr, x_1280, y_720, width, height, cancel_event=cancel_event))
+    _dry = _rg.get_active_dry_run_context()
+    if _dry is not None:
+        return bool(_dry.intercept_tap(x_1280, y_720, width, height, caller="stage_pilot.adb_tap_norm", cancel_event=cancel_event))
     if not adb_path or not adb_addr:
         return False
     if cancel_event and cancel_event.is_set():
@@ -190,6 +206,23 @@ def adb_swipe_norm(
     cancel_event: Optional[threading.Event] = None,
 ) -> bool:
     """Swipe between two normalized 1280x720 coordinates via ADB."""
+    from universal_engine.utils import runtime_guard as _rg
+
+    _hooks = _rg.get_adb_hooks()
+    if _hooks is not None:
+        return bool(
+            _hooks.swipe(
+                adb_path, adb_addr, x1_1280, y1_720, x2_1280, y2_720, duration_ms, width, height, cancel_event=cancel_event
+            )
+        )
+    _dry = _rg.get_active_dry_run_context()
+    if _dry is not None:
+        return bool(
+            _dry.intercept_swipe(
+                x1_1280, y1_720, x2_1280, y2_720, duration_ms, width, height,
+                caller="stage_pilot.adb_swipe_norm", cancel_event=cancel_event,
+            )
+        )
     if not adb_path or not adb_addr:
         return False
     if cancel_event and cancel_event.is_set():

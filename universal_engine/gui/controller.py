@@ -20,14 +20,14 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 if getattr(sys, "frozen", False):
-    from universal_engine import ai_strategist, auto_growth, maa_runner, roguelike_ai_copilot, stage_pilot
+    from universal_engine import ai_strategist, auto_growth, maa_runner, roguelike_ai_copilot, stage_pilot, toolbox_runner
     from universal_engine.master_scheduler import MaaEngine, get_arknights_week_key, load_state
-    from universal_engine.utils import engine_lock, env_doctor, maa_installer
+    from universal_engine.utils import engine_lock, env_doctor, maa_installer, runtime_guard
     from universal_engine.gui import contract
 else:
-    from .. import ai_strategist, auto_growth, maa_runner, roguelike_ai_copilot, stage_pilot
+    from .. import ai_strategist, auto_growth, maa_runner, roguelike_ai_copilot, stage_pilot, toolbox_runner
     from ..master_scheduler import MaaEngine, get_arknights_week_key, load_state
-    from ..utils import engine_lock, env_doctor, maa_installer
+    from ..utils import engine_lock, env_doctor, maa_installer, runtime_guard
     from . import contract
 
 
@@ -255,6 +255,7 @@ def format_snapshot_payload(raw_snap: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "config": cfg,
         "maa_dir": maa_dir,
+        "dry_run": bool(runtime_guard.is_dry_run_enabled()),
         "maa": {
             "valid": maa_valid,
             "version": maa_ver,
@@ -809,13 +810,28 @@ class LauncherController:
 
         def _worker() -> None:
             try:
-                adb_pre = self._ensure_adb_before_task()
-                if self._cancel_event.is_set():
-                    res = {"ok": False, "cancelled": True}
-                elif adb_pre.get("mumu_adbd_hung"):
-                    res = {"ok": False, "error": str(adb_pre.get("warning") or "检测到模拟器 adbd 假死，请重启模拟器后重试")}
+                if runtime_guard.is_dry_run_enabled():
+                    # Dry-Run: never probe/launch the emulator; run inside a process-wide interception scope.
+                    self._append_log("[DRY-RUN] 演习模式：跳过模拟器拉起与 ADB 预检，仅拦截并输出拟下发动作")
+                    if self._cancel_event.is_set():
+                        res = {"ok": False, "cancelled": True}
+                    else:
+                        with runtime_guard.dry_run_scope(
+                            enabled=True,
+                            max_actions=3,
+                            base_dir=self.engine.base_dir,
+                            log_callback=self._cb_log,
+                            process_wide=True,
+                        ):
+                            res = fn()
                 else:
-                    res = fn()
+                    adb_pre = self._ensure_adb_before_task()
+                    if self._cancel_event.is_set():
+                        res = {"ok": False, "cancelled": True}
+                    elif adb_pre.get("mumu_adbd_hung"):
+                        res = {"ok": False, "error": str(adb_pre.get("warning") or "检测到模拟器 adbd 假死，请重启模拟器后重试")}
+                    else:
+                        res = fn()
             except env_doctor.OperationCancelledError:
                 res = {"ok": False, "cancelled": True}
             except Exception as exc:
@@ -1053,6 +1069,139 @@ class LauncherController:
     def stop_current_task(self) -> Dict[str, Any]:
         self._stop_current_task()
         return {"ok": True}
+
+    # ---------- Toolbox Methods ----------
+    def get_toolbox_catalog(self) -> Dict[str, Any]:
+        cfg = self.engine.get_config()
+        maa_dir = cfg.get("maa_dir") or cfg.get("maa_path") or maa_installer.resolve_maa_path(self.engine.config_path)
+        reclamation_snap = self._snapshot_formatted.get("reclamation")
+        return toolbox_runner.inspect_toolbox_catalog(maa_dir, cfg, reclamation_snapshot=reclamation_snap)
+
+    def save_toolbox_config(self, tool_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        if tool_id == "reclamation":
+            curr_cfg = self.engine.get_config()
+            curr_ra = curr_cfg.get("reclamation", {})
+            updated_ra = dict(curr_ra) if isinstance(curr_ra, dict) else {}
+            if "theme" in params:
+                updated_ra["theme"] = str(params["theme"])
+            if "mode" in params:
+                updated_ra["mode"] = params["mode"]
+            if "mode_label" in params:
+                updated_ra["mode_label"] = str(params["mode_label"])
+            if "clear_store" in params:
+                updated_ra["clear_store"] = bool(params["clear_store"])
+            self.engine.save_config({"reclamation": updated_ra})
+            if isinstance(self._snapshot_raw, dict):
+                self._snapshot_raw["config"] = self.engine.get_config()
+                self._snapshot_formatted = format_snapshot_payload(self._snapshot_raw)
+            return {
+                "ok": True,
+                "tool_id": "reclamation",
+                "reclamation": self._snapshot_formatted.get("reclamation"),
+            }
+
+        curr_cfg = self.engine.get_config()
+        curr_tb = curr_cfg.get("toolbox", {})
+        if not isinstance(curr_tb, dict):
+            curr_tb = {}
+        updated_tb = dict(curr_tb)
+        updated_tool = dict(updated_tb.get(tool_id, {}))
+        if isinstance(params, dict):
+            updated_tool.update(params)
+        updated_tb[tool_id] = updated_tool
+        self.engine.save_config({"toolbox": updated_tb})
+        if isinstance(self._snapshot_raw, dict):
+            self._snapshot_raw["config"] = self.engine.get_config()
+            self._snapshot_formatted = format_snapshot_payload(self._snapshot_raw)
+        return {
+            "ok": True,
+            "tool_id": tool_id,
+            "toolbox_config": updated_tb,
+        }
+
+    def start_toolbox_task(self, tool_id: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        if tool_id == "reclamation":
+            return self.toggle_reclamation()
+
+        if tool_id == "blackflow_money":
+            cfg = self.engine.get_config()
+            maa_dir = cfg.get("maa_dir") or cfg.get("maa_path") or maa_installer.resolve_maa_path(self.engine.config_path)
+            spec = toolbox_runner.build_toolbox_task_spec("blackflow_money", maa_dir=maa_dir, config=cfg, overrides=params)
+            if not spec.get("available"):
+                err_msg = str(spec.get("unavailable_reason") or "小工具不可用，请升级 MAA 版本")
+                self._append_log(f"[WARN][前置拦截] 无法启动「{tool_id}」：{err_msg}")
+                self._emit_toast("warn", "小工具不可用", err_msg)
+                return {
+                    "ok": False,
+                    "rejected": True,
+                    "reason": "tool_unavailable",
+                    "error": err_msg,
+                    "task_state": dict(self._last_task_state),
+                }
+
+            rl_cfg = cfg.get("roguelike", {})
+            rl_ov = dict(rl_cfg) if isinstance(rl_cfg, dict) else {}
+            rl_ov["theme"] = "BlackFlow"
+            rl_ov["mode"] = 1
+            rl_ov["investment_enabled"] = True
+
+            tb_bm = cfg.get("toolbox", {}).get("blackflow_money", {})
+            merged_bm = dict(tb_bm) if isinstance(tb_bm, dict) else {}
+            if params and isinstance(params, dict):
+                merged_bm.update(params)
+
+            if "starts_count" in merged_bm:
+                try:
+                    rl_ov["starts_count"] = int(merged_bm["starts_count"])
+                except (ValueError, TypeError):
+                    pass
+            if "stop_when_investment_full" in merged_bm:
+                rl_ov["stop_when_investment_full"] = bool(merged_bm["stop_when_investment_full"])
+
+            return self._run_background_task(
+                "沉沦者的黑流树海刷钱",
+                lambda: self.engine.run_roguelike(
+                    theme="BlackFlow",
+                    rl_mode=1,
+                    overrides={"roguelike": rl_ov},
+                    log_callback=self._cb_log,
+                    progress_callback=self._cb_progress,
+                    cancel_event=self._cancel_event,
+                ),
+                on_done=self._log_roguelike_report,
+                task_kind="roguelike",
+                pre_log="[肉鸽AI] 准备启动黑流树海刷钱任务...",
+            )
+
+        cfg = self.engine.get_config()
+        maa_dir = cfg.get("maa_dir") or cfg.get("maa_path") or maa_installer.resolve_maa_path(self.engine.config_path)
+        spec = toolbox_runner.build_toolbox_task_spec(tool_id, maa_dir=maa_dir, config=cfg, overrides=params)
+        if not spec.get("available"):
+            err_msg = str(spec.get("unavailable_reason") or "小工具不可用，请升级 MAA 版本")
+            self._append_log(f"[WARN][前置拦截] 无法启动「{tool_id}」：{err_msg}")
+            self._emit_toast("warn", "小工具不可用", err_msg)
+            return {
+                "ok": False,
+                "rejected": True,
+                "reason": "tool_unavailable",
+                "error": err_msg,
+                "task_state": dict(self._last_task_state),
+            }
+
+        tool_name = spec.get("name") or tool_id
+        return self._run_background_task(
+            f"小工具 · {tool_name}",
+            lambda: self.engine.run_toolbox_task(
+                tool_id=tool_id,
+                tool_params=params,
+                log_callback=self._cb_log,
+                progress_callback=self._cb_progress,
+                cancel_event=self._cancel_event,
+            ),
+            on_done=self._log_toolbox_report,
+            task_kind="toolbox",
+            pre_log=f"[TOOLBOX] 准备启动小工具：{tool_name}...",
+        )
 
     # ---------- Global Settings & Controls ----------
     def set_server(self, server: str) -> Dict[str, Any]:
@@ -1432,7 +1581,7 @@ class LauncherController:
         prev_settings = self.get_settings()
 
         # Ignore echoed config and options bundles
-        payload = {k: v for k, v in payload.items() if k not in ("config", "options")}
+        payload = {k: v for k, v in payload.items() if k not in ("config", "options", "dry_run")}
 
         maa_input = str(payload.get("maa_path", "")).strip()
         if maa_input and maa_input != prev_settings.get("maa_path", ""):
@@ -1896,6 +2045,10 @@ class LauncherController:
             event_type="test",
             force=True,
         )
+        if isinstance(res, dict) and res.get("dry_run"):
+            res = dict(res)
+            res["ok"] = True
+            res["message"] = "[DRY-RUN] 演习模式已拦截 Webhook 测试推送，未发送任何网络请求"
         return res
 
     def test_ai_api(self, base_url: str, api_key: str, model_name: str) -> Dict[str, Any]:
@@ -2040,7 +2193,25 @@ class LauncherController:
             "options": contract.get_options_bundle(),
             "logs": self.logs,
             "open_wizard": needs_wizard,
+            "dry_run": bool(runtime_guard.is_dry_run_enabled()),
         }
+
+    def set_dry_run(self, enabled: bool) -> Dict[str, Any]:
+        """Toggle in-memory Dry-Run (只看不点). Never persisted to launcher_config.json."""
+        flag = bool(enabled)
+        runtime_guard.set_process_dry_run(flag, max_actions=3, base_dir=self.engine.base_dir)
+        actual = bool(runtime_guard.is_dry_run_enabled())
+        try:
+            self._snapshot_formatted = dict(self._snapshot_formatted)
+            self._snapshot_formatted["dry_run"] = actual
+        except Exception:
+            pass
+        self._append_log("[DRY-RUN] 演习模式已开启（仅当前会话生效）" if actual else "[DRY-RUN] 演习模式已关闭")
+        try:
+            self._ui_queue.put(("snapshot_ready", dict(self._snapshot_raw)))
+        except Exception:
+            pass
+        return {"ok": True, "dry_run": actual, "snapshot": dict(self._snapshot_formatted)}
 
     def refresh_snapshot(self, check_adb: bool = False) -> Dict[str, Any]:
         self._refresh_snapshot_async(check_adb=check_adb)
@@ -2107,6 +2278,18 @@ class LauncherController:
             f"模式={r.get('mode_name') or r.get('mode_label', '-')}{stage_s} | 完成周期={m.get('cycles_completed', 0)} | "
             f"造物轮次={m.get('craft_rounds', 0)} | 搬空商店={m.get('store_cleared', False)}"
         )
+
+    def _log_toolbox_report(self, r: Dict[str, Any]) -> None:
+        if r.get("cancelled"):
+            self._append_log(f"[TOOLBOX] 小工具任务已停止：{r.get('tool_name') or r.get('tool_id', '')}")
+            return
+        if r.get("error"):
+            self._append_log(f"[ERR] 小工具任务失败: {r.get('error')}")
+            return
+        tool_name = r.get("tool_name") or r.get("tool_id", "-")
+        elapsed = r.get("total_elapsed_seconds", 0)
+        self._append_log(f"[TOOLBOX] 小工具任务完成(耗时 {elapsed}s) | 工具={tool_name}")
+        self._emit_toast("success", "小工具任务完成", f"{tool_name} 执行完成")
 
     def _log_daily_report(self, r: Dict[str, Any]) -> None:
         if r.get("error"):

@@ -281,3 +281,19 @@ class WebViewJsApi:
             except Exception:
                 pass
         return self._controller.report_smoke_metrics(metrics=metrics)
+
+    # 41. get_toolbox_catalog
+    def get_toolbox_catalog(self) -> Dict[str, Any]:
+        return self._controller.get_toolbox_catalog()
+
+    # 42. save_toolbox_config
+    def save_toolbox_config(self, tool_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        return self._controller.save_toolbox_config(tool_id=tool_id, params=params)
+
+    # 43. start_toolbox_task
+    def start_toolbox_task(self, tool_id: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        return self._controller.start_toolbox_task(tool_id=tool_id, params=params)
+
+    # 44. set_dry_run
+    def set_dry_run(self, enabled: bool) -> Dict[str, Any]:
+        return self._controller.set_dry_run(bool(enabled))

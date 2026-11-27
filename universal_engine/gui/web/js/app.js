@@ -30,6 +30,8 @@
     options: {},
     snapshot: {},
     taskState: {},
+    toolboxCatalog: null,
+    activeToolboxId: '',
     logs: [],
     logFilterTag: 'all',
     logSearchQuery: '',
@@ -300,6 +302,12 @@
 
     if (pageId === 'page-terminal') {
       renderTerminalLogs();
+    } else if (pageId === 'page-toolbox') {
+      if (!appState.toolboxCatalog) {
+        loadToolboxCatalog();
+      } else {
+        renderToolboxDetail();
+      }
     }
   }
 
@@ -490,10 +498,68 @@
     }
   }
 
+  function syncDryRunUI(isDry) {
+    var pill = $('top-pill-dry-run');
+    var sw = $('set-sw-dry-run');
+    if (pill) pill.classList.toggle('hidden', !isDry);
+    if (sw) sw.checked = isDry;
+  }
+
+  function openSettingsAtAiTab() {
+    var panes = $$('.settings-tab-pane');
+    for (var p = 0; p < panes.length; p++) {
+      if (panes[p].style.display) panes[p].style.display = '';
+    }
+    loadSettingsIntoModal();
+    openModal('modal-settings');
+    var btns = $$('#settings-tabs-bar .modal-tab-btn');
+    for (var i = 0; i < btns.length; i++) {
+      if (btns[i].getAttribute('data-tab') === 'tab-set-ai') {
+        btns[i].click();
+        break;
+      }
+    }
+  }
+
+  function bindDryRunControls() {
+    var sw = $('set-sw-dry-run');
+    if (sw) {
+      sw.addEventListener('change', function () {
+        var want = Boolean(sw.checked);
+        sw.disabled = true;
+        PrtsBridge.setDryRun(want).then(function (res) {
+          sw.disabled = false;
+          if (!res || res.ok === false) {
+            sw.checked = !want;
+            showToast('error', '演习模式', (res && (res.error || res.message)) || '切换失败');
+            return;
+          }
+          var on = res.dry_run != null ? Boolean(res.dry_run) : want;
+          syncDryRunUI(on);
+          if (appState.snapshot) appState.snapshot.dry_run = on;
+          showToast(on ? 'warn' : 'success', '演习模式', on ? '演习模式已开启（仅当前会话生效）' : '演习模式已关闭');
+        }).catch(function (err) {
+          sw.disabled = false;
+          sw.checked = !want;
+          showToast('error', '演习模式', '切换失败：' + (err && err.message ? err.message : err));
+        });
+      });
+    }
+    var pill = $('top-pill-dry-run');
+    if (pill) {
+      pill.addEventListener('click', openSettingsAtAiTab);
+    }
+  }
+
   // Top Bar & Snapshot Binding
   function updateSnapshotUI(snap) {
     if (!snap) return;
     appState.snapshot = snap;
+
+    // 0. Dry-Run (runtime-only) badge + settings switch sync
+    if (Object.prototype.hasOwnProperty.call(snap, 'dry_run')) {
+      syncDryRunUI(Boolean(snap.dry_run));
+    }
 
     // 1. MAA Status Pill
     var dotMaa = $('dot-maa');
@@ -627,6 +693,21 @@
           ' | 搬空商店：' + (ra.clear_store ? '开' : '关') +
           (ra.loaded_from_gui_config ? ' | 继承原版 MAA 配置' : '');
       }
+
+      if (appState.activePage === 'page-toolbox' && appState.activeToolboxId === 'reclamation') {
+        var tbRaTheme = $('toolbox-ra-theme');
+        if (tbRaTheme && ra.theme != null) {
+          tbRaTheme.value = ra.theme;
+        }
+        var tbRaMode = $('toolbox-ra-mode');
+        if (tbRaMode && (ra.mode_label != null || ra.mode != null)) {
+          tbRaMode.value = ra.mode_label != null ? ra.mode_label : ra.mode;
+        }
+        var tbRaClear = $('toolbox-ra-clear-store');
+        if (tbRaClear && ra.clear_store != null) {
+          tbRaClear.checked = Boolean(ra.clear_store);
+        }
+      }
     }
   }
 
@@ -710,6 +791,10 @@
       btnToggleRaBtn.disabled = !state.ra_button_enabled;
       btnToggleRaBtn.title = !state.ra_button_enabled ? lockTitle : '';
     }
+
+    if (typeof updateToolboxButtons === 'function') {
+      updateToolboxButtons(findToolboxItem(appState.activeToolboxId));
+    }
   }
 
   function updateSegmentedUI(containerId, activeValue) {
@@ -770,6 +855,7 @@
       case 'tutorial': return 'tag-tutorial';
       case 'roguelike': return 'tag-roguelike';
       case 'reclamation': return 'tag-reclamation';
+      case 'toolbox': return 'tag-toolbox';
       case 'story': return 'tag-story';
       case 'report': return 'tag-report';
       case 'alert': return 'tag-alert';
@@ -1762,6 +1848,8 @@
       });
     }
 
+    bindDryRunControls();
+
     // Settings Modal actions
     var btnSaveSettings = $('btn-save-settings');
     if (btnSaveSettings) {
@@ -1880,6 +1968,51 @@
         PrtsBridge.cancelMaaUpdate().catch(function () {});
       });
     }
+
+    // Page 5 Toolbox Actions
+    var btnRefreshToolbox = $('btn-refresh-toolbox');
+    if (btnRefreshToolbox) {
+      btnRefreshToolbox.addEventListener('click', function () {
+        loadToolboxCatalog(true);
+      });
+    }
+
+    var btnStartToolbox = $('btn-start-toolbox');
+    if (btnStartToolbox) {
+      btnStartToolbox.addEventListener('click', function () {
+        var item = findToolboxItem(appState.activeToolboxId);
+        if (!item) return;
+
+        if (item.available === false) {
+          showToast('warn', '组件不可用', '当前 MAA 版本缺少该组件资源，请更新 MAA。');
+          return;
+        }
+
+        if (item.id === 'reclamation') {
+          PrtsBridge.toggleReclamation()
+            .then(handleTaskStartResult('生息演算'))
+            .catch(handleBridgeError('生息演算操作失败'));
+          return;
+        }
+
+        if (!guardTaskNotRunning(item.name)) return;
+
+        var params = collectToolboxFormParams(item.id);
+        PrtsBridge.startToolboxTask(item.id, params)
+          .then(handleTaskStartResult(item.name))
+          .catch(handleBridgeError('启动小工具任务失败'));
+      });
+    }
+
+    var btnToolboxSec = $('btn-toolbox-secondary');
+    if (btnToolboxSec) {
+      btnToolboxSec.addEventListener('click', function () {
+        var item = findToolboxItem(appState.activeToolboxId);
+        if (item && item.id === 'reclamation') {
+          switchPage('page-exploration');
+        }
+      });
+    }
   }
 
   // Populate Filter Chips on Terminal Header
@@ -1903,6 +2036,687 @@
         renderTerminalLogs();
       });
       container.appendChild(chip);
+    }
+  }
+
+  // Toolbox Catalog & Dynamic Form Management
+  function findToolboxItem(toolId) {
+    if (!appState.toolboxCatalog || !appState.toolboxCatalog.categories) return null;
+    var cats = appState.toolboxCatalog.categories;
+    for (var c = 0; c < cats.length; c++) {
+      var items = cats[c].items || [];
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].id === toolId) return items[i];
+      }
+    }
+    return null;
+  }
+
+  function loadToolboxCatalog(refreshSnapshot) {
+    return PrtsBridge.getToolboxCatalog().then(function (catalog) {
+      if (!catalog) return;
+      appState.toolboxCatalog = catalog;
+
+      if (!appState.activeToolboxId) {
+        var firstItem = null;
+        var cats = catalog.categories || [];
+        for (var c = 0; c < cats.length; c++) {
+          var items = cats[c].items || [];
+          if (items.length > 0) {
+            firstItem = items[0];
+            break;
+          }
+        }
+        if (firstItem) {
+          appState.activeToolboxId = firstItem.id;
+        }
+      }
+
+      renderToolboxSidebar();
+      renderToolboxDetail();
+
+      if (refreshSnapshot) {
+        PrtsBridge.refreshSnapshot().then(function (res) {
+          if (res && res.snapshot) updateSnapshotUI(res.snapshot);
+        }).catch(function () {});
+      }
+    }).catch(handleBridgeError('加载小工具目录失败'));
+  }
+
+  function renderToolboxSidebar() {
+    var container = $('toolbox-nav-list');
+    if (!container || !appState.toolboxCatalog) return;
+
+    var cats = appState.toolboxCatalog.categories || [];
+    var html = '';
+    for (var c = 0; c < cats.length; c++) {
+      var cat = cats[c];
+      var items = cat.items || [];
+      if (items.length === 0) continue;
+      var catTitle = cat.title || cat.name || cat.key || cat.id || '';
+      var isCurrentEvent = (cat.key || cat.id || cat.category_id) === 'current_event';
+      html += '<div class="toolbox-category-group">';
+      html += '<div class="toolbox-category-label">' + escapeHtml(catTitle) + '</div>';
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i];
+        var isActive = it.id === appState.activeToolboxId;
+        var unavailClass = it.available === false ? ' unavailable' : '';
+        var activeClass = isActive ? ' active' : '';
+        var tagLabel = it.available === false ? '不可用' : (isCurrentEvent ? '当期' : '');
+        var pillHtml = tagLabel ? '<span class="toolbox-item-pill">' + escapeHtml(tagLabel) + '</span>' : '';
+        html += '<button type="button" class="toolbox-nav-item' + activeClass + unavailClass + '" data-tool-id="' + escapeHtml(it.id) + '">' +
+          '<span class="toolbox-item-name">' + escapeHtml(it.name) + '</span>' +
+          pillHtml +
+          '</button>';
+      }
+      html += '</div>';
+    }
+    container.innerHTML = html;
+
+    var navBtns = container.querySelectorAll('.toolbox-nav-item');
+    for (var b = 0; b < navBtns.length; b++) {
+      navBtns[b].addEventListener('click', function () {
+        var tid = this.getAttribute('data-tool-id');
+        if (tid && tid !== appState.activeToolboxId) {
+          appState.activeToolboxId = tid;
+          var all = container.querySelectorAll('.toolbox-nav-item');
+          for (var k = 0; k < all.length; k++) all[k].classList.remove('active');
+          this.classList.add('active');
+          renderToolboxDetail();
+        }
+      });
+    }
+  }
+
+  function renderToolboxDetail() {
+    var item = findToolboxItem(appState.activeToolboxId);
+    var titleEl = $('toolbox-detail-title');
+    var badgeEl = $('toolbox-detail-badge');
+    var chipEl = $('toolbox-maa-chip');
+    var summaryEl = $('toolbox-detail-summary');
+    var noticesBox = $('toolbox-notices-box');
+    var paramsContainer = $('toolbox-params-container');
+
+    if (!item) {
+      if (titleEl) titleEl.textContent = '未选择工具';
+      if (summaryEl) summaryEl.textContent = '请从左侧选择一个小工具';
+      if (noticesBox) noticesBox.classList.add('hidden');
+      if (paramsContainer) paramsContainer.innerHTML = '';
+      updateToolboxButtons(null);
+      return;
+    }
+
+    if (titleEl) titleEl.textContent = item.name || '';
+    if (badgeEl) {
+      var catTitle = '常驻功能';
+      if (item.category === 'current_event') catTitle = '当期活动';
+      else if (item.category === 'permanent_event') catTitle = '常驻活动';
+      badgeEl.textContent = catTitle;
+    }
+    if (chipEl) {
+      chipEl.textContent = item.version_req || 'MAA v6.23.2+';
+    }
+    if (summaryEl) {
+      summaryEl.textContent = item.summary || '全自动任务。';
+    }
+
+    // Render notices
+    if (noticesBox) {
+      var notices = item.notices || [];
+      if (typeof notices === 'string' && notices.trim()) notices = [notices.trim()];
+      else if (!Array.isArray(notices)) notices = [];
+      var fullNotices = notices.slice();
+      if (item.available === false) {
+        fullNotices.unshift('当前 MAA 内核版本缺少此小游戏或组件所需的任务资源，请在顶部状态栏或设置中检查更新 MAA。');
+      }
+      if (fullNotices.length > 0) {
+        noticesBox.classList.remove('hidden');
+        var noticeHtml = '';
+        for (var n = 0; n < fullNotices.length; n++) {
+          noticeHtml += '<div class="toolbox-notice-item">' +
+            '<span style="font-weight:700;">[注意]</span> ' +
+            '<span>' + escapeHtml(fullNotices[n]) + '</span>' +
+            '</div>';
+        }
+        noticesBox.innerHTML = noticeHtml;
+      } else {
+        noticesBox.classList.add('hidden');
+        noticesBox.innerHTML = '';
+      }
+    }
+
+    // Render dynamic form
+    renderToolboxForm(item, paramsContainer);
+
+    // Update bottom buttons
+    updateToolboxButtons(item);
+  }
+
+  function renderToolboxForm(item, container) {
+    if (!container) return;
+    container.innerHTML = '';
+
+    var catalogCfg = (appState.toolboxCatalog && appState.toolboxCatalog.toolbox_config) || {};
+    var opts = appState.options || {};
+
+    if (item.id === 'secret_front') {
+      var sfCfg = catalogCfg.secret_front || item.params || {};
+      var curEnding = sfCfg.ending || 'EndingE';
+      var curEvent = sfCfg.priority_event || '';
+
+      var endings = opts.secret_front_endings || [
+        { label: '结局 A', value: 'EndingA' },
+        { label: '结局 B', value: 'EndingB' },
+        { label: '结局 C', value: 'EndingC' },
+        { label: '结局 D', value: 'EndingD' },
+        { label: '结局 E（默认）', value: 'EndingE' }
+      ];
+
+      var events = opts.secret_front_events || [
+        { label: '不优先指定事件', value: '' },
+        { label: '支援作战平台', value: '支援作战平台' },
+        { label: '游侠', value: '游侠' },
+        { label: '诡影迷踪', value: '诡影迷踪' }
+      ];
+
+      var endingsHtml = '';
+      for (var e = 0; e < endings.length; e++) {
+        var selE = endings[e].value === curEnding ? ' selected' : '';
+        endingsHtml += '<option value="' + escapeHtml(endings[e].value) + '"' + selE + '>' + escapeHtml(endings[e].label) + '</option>';
+      }
+
+      var eventsHtml = '';
+      for (var ev = 0; ev < events.length; ev++) {
+        var selEv = events[ev].value === curEvent ? ' selected' : '';
+        eventsHtml += '<option value="' + escapeHtml(events[ev].value) + '"' + selEv + '>' + escapeHtml(events[ev].label) + '</option>';
+      }
+
+      var sfHtml = '<div class="m3-settings-group">' +
+        '<div class="m3-group-label">隐秘战线参数设置</div>' +
+        '<div class="m3-group-list">' +
+          '<div class="m3-setting-item">' +
+            '<div class="m3-setting-text">' +
+              '<div class="m3-setting-title">目标结局</div>' +
+              '<div class="m3-setting-desc">指定本次小游戏自动攻略的目标结局路线</div>' +
+            '</div>' +
+            '<select class="input-select" id="toolbox-sf-ending" style="width: 170px;">' + endingsHtml + '</select>' +
+          '</div>' +
+          '<div class="m3-setting-item">' +
+            '<div class="m3-setting-text">' +
+              '<div class="m3-setting-title">优先系列事件</div>' +
+              '<div class="m3-setting-desc">探索途中遇到指定系列事件节点时优先选择</div>' +
+            '</div>' +
+            '<select class="input-select" id="toolbox-sf-event" style="width: 170px;">' + eventsHtml + '</select>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+      container.innerHTML = sfHtml;
+
+      var endingSelect = $('toolbox-sf-ending');
+      var eventSelect = $('toolbox-sf-event');
+      function onSfChange() {
+        var params = collectToolboxFormParams('secret_front');
+        if (catalogCfg.secret_front) {
+          catalogCfg.secret_front.ending = params.ending;
+          catalogCfg.secret_front.priority_event = params.priority_event;
+        }
+        PrtsBridge.saveToolboxConfig('secret_front', params).catch(handleBridgeError('保存配置失败'));
+      }
+      if (endingSelect) endingSelect.addEventListener('change', onSfChange);
+      if (eventSelect) eventSelect.addEventListener('change', onSfChange);
+
+    } else if (item.id === 'stronghold_protocol') {
+      var spCfg = catalogCfg.stronghold_protocol || item.params || {};
+      var curTheme = spCfg.theme || 'Regulation';
+      var curMode = spCfg.mode || 'badge';
+      var curTarget = spCfg.target != null ? spCfg.target : 3;
+      var curRuns = spCfg.runs != null ? spCfg.runs : 60;
+
+      var rawThemes = (item.meta && item.meta.themes) || [{ label: '规程 (Regulation)', value: 'Regulation' }];
+      var themesHtml = '';
+      for (var t = 0; t < rawThemes.length; t++) {
+        var thVal = rawThemes[t].value || rawThemes[t];
+        var thLbl = rawThemes[t].label || rawThemes[t];
+        var selT = thVal === curTheme ? ' selected' : '';
+        themesHtml += '<option value="' + escapeHtml(thVal) + '"' + selT + '>' + escapeHtml(thLbl) + '</option>';
+      }
+
+      var rawRecOps = (item.meta && item.meta.recommended_operators) || '';
+      var recOps = Array.isArray(rawRecOps) ? (rawRecOps.length ? '推荐核心与借人干员：' + rawRecOps.join('、') : '') : String(rawRecOps || '');
+      var recOpsHtml = recOps ? (
+        '<div class="m3-setting-item m3-setting-accent">' +
+          '<div class="m3-setting-text">' +
+            '<div class="m3-setting-title">推荐核心干员</div>' +
+            '<div class="m3-setting-desc">' + escapeHtml(recOps) + '</div>' +
+          '</div>' +
+        '</div>'
+      ) : '';
+
+      var isScore = curMode === 'score';
+      var targetDisplay = isScore ? 'display: none;' : '';
+      var runsDisplay = isScore ? 'display: none;' : '';
+
+      var spHtml = '<div class="m3-settings-group">' +
+        '<div class="m3-group-label">卫戍协议参数设置</div>' +
+        '<div class="m3-group-list">' +
+          recOpsHtml +
+          '<div class="m3-setting-item">' +
+            '<div class="m3-setting-text">' +
+              '<div class="m3-setting-title">协议主题</div>' +
+              '<div class="m3-setting-desc">选择当前当期或往期常驻协议主题</div>' +
+            '</div>' +
+            '<select class="input-select" id="toolbox-sp-theme" style="width: 170px;">' + themesHtml + '</select>' +
+          '</div>' +
+          '<div class="m3-setting-item">' +
+            '<div class="m3-setting-text">' +
+              '<div class="m3-setting-title">策略模式</div>' +
+              '<div class="m3-setting-desc">刷角标（完整通关）或刷分（放生速通）</div>' +
+            '</div>' +
+            '<div class="segmented-control" id="toolbox-sp-mode">' +
+              '<button type="button" class="segmented-btn' + (!isScore ? ' active' : '') + '" data-value="badge"><span>刷角标</span></button>' +
+              '<button type="button" class="segmented-btn' + (isScore ? ' active' : '') + '" data-value="score"><span>刷分速通</span></button>' +
+            '</div>' +
+          '</div>' +
+          '<div class="m3-setting-item" id="toolbox-sp-target-row" style="' + targetDisplay + '">' +
+            '<div class="m3-setting-text">' +
+              '<div class="m3-setting-title">角标目标</div>' +
+              '<div class="m3-setting-desc">通关次数达到目标后自动停止</div>' +
+            '</div>' +
+            '<div class="segmented-control" id="toolbox-sp-target">' +
+              '<button type="button" class="segmented-btn' + (curTarget === 3 ? ' active' : '') + '" data-value="3"><span>金色角标 (3次)</span></button>' +
+              '<button type="button" class="segmented-btn' + (curTarget === 6 ? ' active' : '') + '" data-value="6"><span>彩色角标 (6次)</span></button>' +
+            '</div>' +
+          '</div>' +
+          '<div class="m3-setting-item" id="toolbox-sp-runs-row" style="' + runsDisplay + '">' +
+            '<div class="m3-setting-text">' +
+              '<div class="m3-setting-title">通关局数上限</div>' +
+              '<div class="m3-setting-desc">单次任务最大尝试探索局数 (1~999)</div>' +
+            '</div>' +
+            '<input type="number" class="input-text" id="toolbox-sp-runs" style="width: 100px;" min="1" max="999" value="' + escapeHtml(String(curRuns)) + '">' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+      container.innerHTML = spHtml;
+
+      function onSpChange() {
+        var params = collectToolboxFormParams('stronghold_protocol');
+        if (catalogCfg.stronghold_protocol) {
+          catalogCfg.stronghold_protocol.theme = params.theme;
+          catalogCfg.stronghold_protocol.mode = params.mode;
+          catalogCfg.stronghold_protocol.target = params.target;
+          catalogCfg.stronghold_protocol.runs = params.runs;
+        }
+        PrtsBridge.saveToolboxConfig('stronghold_protocol', params).catch(handleBridgeError('保存配置失败'));
+      }
+
+      var modeBtns = $$('#toolbox-sp-mode .segmented-btn');
+      for (var mb = 0; mb < modeBtns.length; mb++) {
+        modeBtns[mb].addEventListener('click', function () {
+          for (var k = 0; k < modeBtns.length; k++) modeBtns[k].classList.remove('active');
+          this.classList.add('active');
+          var isSc = this.getAttribute('data-value') === 'score';
+          var tRow = $('toolbox-sp-target-row');
+          var rRow = $('toolbox-sp-runs-row');
+          if (tRow) tRow.style.display = isSc ? 'none' : '';
+          if (rRow) rRow.style.display = isSc ? 'none' : '';
+          onSpChange();
+        });
+      }
+
+      var targetBtns = $$('#toolbox-sp-target .segmented-btn');
+      for (var tb = 0; tb < targetBtns.length; tb++) {
+        targetBtns[tb].addEventListener('click', function () {
+          for (var k = 0; k < targetBtns.length; k++) targetBtns[k].classList.remove('active');
+          this.classList.add('active');
+          onSpChange();
+        });
+      }
+
+      var themeSelect = $('toolbox-sp-theme');
+      if (themeSelect) themeSelect.addEventListener('change', onSpChange);
+      var runsInput = $('toolbox-sp-runs');
+      if (runsInput) runsInput.addEventListener('change', onSpChange);
+
+    } else if (item.id === 'reclamation') {
+      var snapRa = (appState.snapshot && appState.snapshot.reclamation) || {};
+      var catRa = (appState.toolboxCatalog && appState.toolboxCatalog.reclamation) || {};
+      var curRaTheme = snapRa.theme != null ? snapRa.theme : (catRa.theme != null ? catRa.theme : 'RelaunchAnchor');
+      var curRaMode = snapRa.mode_label != null ? snapRa.mode_label : (snapRa.mode != null ? snapRa.mode : (catRa.mode_label != null ? catRa.mode_label : (catRa.mode != null ? catRa.mode : 'RA1')));
+      var curClear = snapRa.clear_store != null ? snapRa.clear_store : (catRa.clear_store != null ? catRa.clear_store : true);
+
+      var raThemes = opts.ra_themes || [
+        { label: '跟随原版 MAA (默认重启锚点)', value: '' },
+        { label: '重启锚点 (RelaunchAnchor)', value: 'RelaunchAnchor' },
+        { label: '沙洲遗闻 (Tales)', value: 'Tales' }
+      ];
+
+      var raModes = opts.ra_modes || [
+        { label: '跟随原版 MAA', value: '' },
+        { label: 'RA-1 关卡循环 · 精耕细作 (RA1)', value: 'RA1' },
+        { label: 'RA-4 关卡循环 · 筹划经营/维什戴尔 (RA4)', value: 'RA4' },
+        { label: 'RA-15 关卡循环 · 筹划经营/圣聆初雪 (RA15)', value: 'RA15' },
+        { label: '沙洲遗闻 · 无存档刷繁荣度 (ProsperityNoSave)', value: 'ProsperityNoSave' },
+        { label: '沙洲遗闻 · 存档造物刷繁荣度 (ProsperityInSave)', value: 'ProsperityInSave' }
+      ];
+
+      var raThemesHtml = '';
+      for (var rth = 0; rth < raThemes.length; rth++) {
+        var selRth = raThemes[rth].value === curRaTheme ? ' selected' : '';
+        raThemesHtml += '<option value="' + escapeHtml(raThemes[rth].value) + '"' + selRth + '>' + escapeHtml(raThemes[rth].label) + '</option>';
+      }
+
+      var raModesHtml = '';
+      for (var rm = 0; rm < raModes.length; rm++) {
+        var selRm = raModes[rm].value === curRaMode ? ' selected' : '';
+        raModesHtml += '<option value="' + escapeHtml(raModes[rm].value) + '"' + selRm + '>' + escapeHtml(raModes[rm].label) + '</option>';
+      }
+
+      var checkedClear = curClear ? ' checked' : '';
+
+      var raHtml = '<div class="m3-settings-group">' +
+        '<div class="m3-group-label">生息演算联动设置</div>' +
+        '<div class="m3-group-list">' +
+          '<div class="m3-setting-item">' +
+            '<div class="m3-setting-text">' +
+              '<div class="m3-setting-title">演算主题</div>' +
+              '<div class="m3-setting-desc">选择生息演算主题剧本</div>' +
+            '</div>' +
+            '<select class="input-select" id="toolbox-ra-theme" style="width: 200px;">' + raThemesHtml + '</select>' +
+          '</div>' +
+          '<div class="m3-setting-item">' +
+            '<div class="m3-setting-text">' +
+              '<div class="m3-setting-title">刷取模式</div>' +
+              '<div class="m3-setting-desc">指定挂机或繁荣度刷取策略</div>' +
+            '</div>' +
+            '<select class="input-select" id="toolbox-ra-mode" style="width: 200px;">' + raModesHtml + '</select>' +
+          '</div>' +
+          '<label class="m3-setting-item switch-label">' +
+            '<span class="m3-setting-text">' +
+              '<span class="m3-setting-title">自动搬空演算商店</span>' +
+              '<span class="m3-setting-desc">每轮周期自动前往黑市兑换全部商品</span>' +
+            '</span>' +
+            '<input type="checkbox" class="switch-input" id="toolbox-ra-clear-store"' + checkedClear + '>' +
+            '<span class="switch-track"><span class="switch-thumb"><svg class="switch-icon-on"><use href="#icon-check"/></svg><svg class="switch-icon-off"><use href="#icon-minus"/></svg></span></span>' +
+          '</label>' +
+        '</div>' +
+      '</div>';
+      container.innerHTML = raHtml;
+
+      function onRaChange() {
+        var params = collectToolboxFormParams('reclamation');
+        PrtsBridge.saveToolboxConfig('reclamation', params).then(function () {
+          return PrtsBridge.refreshSnapshot();
+        }).then(function (res) {
+          if (res && res.snapshot) updateSnapshotUI(res.snapshot);
+        }).catch(handleBridgeError('保存生息演算配置失败'));
+      }
+
+      var raThemeSel = $('toolbox-ra-theme');
+      if (raThemeSel) raThemeSel.addEventListener('change', onRaChange);
+      var raModeSel = $('toolbox-ra-mode');
+      if (raModeSel) raModeSel.addEventListener('change', onRaChange);
+      var raClearInp = $('toolbox-ra-clear-store');
+      if (raClearInp) raClearInp.addEventListener('change', onRaChange);
+
+    } else if (item.id === 'event_shop') {
+      var esCfg = catalogCfg.event_shop || item.params || {};
+      var presets = esCfg.blacklist_presets || [];
+      var customBl = esCfg.custom_blacklist || '';
+
+      var allPresets = opts.event_shop_presets || [
+        { label: '数据增补仪', value: '数据增补仪' },
+        { label: '数据增补条', value: '数据增补条' },
+        { label: '龙门币', value: '龙门币' },
+        { label: '家具零件', value: '家具零件' },
+        { label: '无限池/其他', value: '其他' }
+      ];
+
+      var chipsHtml = '<div class="toolbox-chip-list" id="toolbox-es-presets">';
+      for (var p = 0; p < allPresets.length; p++) {
+        var pVal = allPresets[p].value;
+        var pLbl = allPresets[p].label;
+        var isAct = presets.indexOf(pVal) !== -1;
+        var actClass = isAct ? ' active' : '';
+        chipsHtml += '<button type="button" class="filter-chip' + actClass + '" data-value="' + escapeHtml(pVal) + '">' +
+          escapeHtml(pLbl) +
+          '</button>';
+      }
+      chipsHtml += '</div>';
+
+      var esHtml = '<div class="m3-settings-group">' +
+        '<div class="m3-group-label">活动商店黑名单配置</div>' +
+        '<div class="m3-group-list">' +
+          '<div class="m3-setting-item m3-setting-stack">' +
+            '<div class="m3-setting-text">' +
+              '<div class="m3-setting-title">快速黑名单选项（点击切换）</div>' +
+              '<div class="m3-setting-desc">勾选项将不会在活动商店中自动购买</div>' +
+            '</div>' +
+            chipsHtml +
+          '</div>' +
+          '<div class="m3-setting-item m3-setting-stack">' +
+            '<div class="m3-setting-text">' +
+              '<div class="m3-setting-title">自定义黑名单商品名称</div>' +
+              '<div class="m3-setting-desc">以逗号、分号或空格分隔不希望购买的商品名称</div>' +
+            '</div>' +
+            '<input type="text" class="input-text" id="toolbox-es-custom" placeholder="例如：龙门币, 招聘许可, 家具零件" value="' + escapeHtml(customBl) + '">' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+      container.innerHTML = esHtml;
+
+      function onEsChange() {
+        var params = collectToolboxFormParams('event_shop');
+        if (catalogCfg.event_shop) {
+          catalogCfg.event_shop.blacklist_presets = params.blacklist_presets;
+          catalogCfg.event_shop.custom_blacklist = params.custom_blacklist;
+        }
+        PrtsBridge.saveToolboxConfig('event_shop', params).catch(handleBridgeError('保存配置失败'));
+      }
+
+      var presetChips = $$('#toolbox-es-presets .filter-chip');
+      for (var pc = 0; pc < presetChips.length; pc++) {
+        presetChips[pc].addEventListener('click', function () {
+          this.classList.toggle('active');
+          onEsChange();
+        });
+      }
+
+      var customInp = $('toolbox-es-custom');
+      if (customInp) customInp.addEventListener('change', onEsChange);
+
+    } else if (item.id === 'auto_raise_potential') {
+      var arpCfg = catalogCfg.auto_raise_potential || item.params || {};
+      var useNormal = Boolean(arpCfg.use_normal_token);
+      var checkedNorm = useNormal ? ' checked' : '';
+
+      var arpHtml = '<div class="m3-settings-group">' +
+        '<div class="m3-group-label">信物提升潜能设置</div>' +
+        '<div class="m3-group-list">' +
+          '<label class="m3-setting-item switch-label">' +
+            '<span class="m3-setting-text">' +
+              '<span class="m3-setting-title">中坚信物不足时消耗普通信物</span>' +
+              '<span class="m3-setting-desc">开启后，若提升中坚干员时中坚信物数量不足，允许消耗通用信物或普通干员信物</span>' +
+            '</span>' +
+            '<input type="checkbox" class="switch-input" id="toolbox-arp-use-normal"' + checkedNorm + '>' +
+            '<span class="switch-track"><span class="switch-thumb"><svg class="switch-icon-on"><use href="#icon-check"/></svg><svg class="switch-icon-off"><use href="#icon-minus"/></svg></span></span>' +
+          '</label>' +
+        '</div>' +
+      '</div>';
+      container.innerHTML = arpHtml;
+
+      var arpInp = $('toolbox-arp-use-normal');
+      if (arpInp) {
+        arpInp.addEventListener('change', function () {
+          var params = { use_normal_token: this.checked };
+          if (catalogCfg.auto_raise_potential) {
+            catalogCfg.auto_raise_potential.use_normal_token = params.use_normal_token;
+          }
+          PrtsBridge.saveToolboxConfig('auto_raise_potential', params).catch(handleBridgeError('保存配置失败'));
+        });
+      }
+
+    } else if (item.id === 'blackflow_money') {
+      var bfCfg = catalogCfg.blackflow_money || item.params || {};
+      var stopFull = bfCfg.stop_when_investment_full != null ? Boolean(bfCfg.stop_when_investment_full) : true;
+      var bfRuns = bfCfg.starts_count != null ? bfCfg.starts_count : 999;
+      var checkedFull = stopFull ? ' checked' : '';
+
+      var bfHtml = '<div class="m3-settings-group">' +
+        '<div class="m3-group-label">黑流树海刷钱设置</div>' +
+        '<div class="m3-group-list">' +
+          '<label class="m3-setting-item switch-label">' +
+            '<span class="m3-setting-text">' +
+              '<span class="m3-setting-title">源石锭存满即停</span>' +
+              '<span class="m3-setting-desc">当源石锭投资额度达到上限时自动结束刷取</span>' +
+            '</span>' +
+            '<input type="checkbox" class="switch-input" id="toolbox-bf-stop-full"' + checkedFull + '>' +
+            '<span class="switch-track"><span class="switch-thumb"><svg class="switch-icon-on"><use href="#icon-check"/></svg><svg class="switch-icon-off"><use href="#icon-minus"/></svg></span></span>' +
+          '</label>' +
+          '<div class="m3-setting-item">' +
+            '<div class="m3-setting-text">' +
+              '<div class="m3-setting-title">最大探索局数</div>' +
+              '<div class="m3-setting-desc">单次刷钱任务的最大探索局数 (1~999)</div>' +
+            '</div>' +
+            '<input type="number" class="input-text" id="toolbox-bf-runs" style="width: 100px;" min="1" max="999" value="' + escapeHtml(String(bfRuns)) + '">' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+      container.innerHTML = bfHtml;
+
+      function onBfChange() {
+        var params = collectToolboxFormParams('blackflow_money');
+        if (catalogCfg.blackflow_money) {
+          catalogCfg.blackflow_money.stop_when_investment_full = params.stop_when_investment_full;
+          catalogCfg.blackflow_money.starts_count = params.starts_count;
+        }
+        PrtsBridge.saveToolboxConfig('blackflow_money', params).catch(handleBridgeError('保存配置失败'));
+      }
+
+      var bfStopInp = $('toolbox-bf-stop-full');
+      if (bfStopInp) bfStopInp.addEventListener('change', onBfChange);
+      var bfRunsInp = $('toolbox-bf-runs');
+      if (bfRunsInp) bfRunsInp.addEventListener('change', onBfChange);
+
+    } else {
+      var noParamHtml = '<div class="m3-settings-group">' +
+        '<div class="m3-group-label">自动化任务说明</div>' +
+        '<div class="m3-group-list">' +
+          '<div class="m3-setting-item">' +
+            '<div class="m3-setting-text">' +
+              '<div class="m3-setting-title">执行方式</div>' +
+              '<div class="m3-setting-desc">该工具无需额外参数，点击下方「启动任务」即可由 MAA 核心全自动执行</div>' +
+            '</div>' +
+          '</div>' +
+          '<div class="m3-setting-item">' +
+            '<div class="m3-setting-text">' +
+              '<div class="m3-setting-title">功能概览</div>' +
+              '<div class="m3-setting-desc">' + escapeHtml(item.summary || '全自动化小游戏/功能辅助') + '</div>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+      container.innerHTML = noParamHtml;
+    }
+  }
+
+  function collectToolboxFormParams(toolId) {
+    if (toolId === 'secret_front') {
+      var endingEl = $('toolbox-sf-ending');
+      var eventEl = $('toolbox-sf-event');
+      return {
+        ending: endingEl ? endingEl.value : 'EndingE',
+        priority_event: eventEl ? eventEl.value : ''
+      };
+    } else if (toolId === 'stronghold_protocol') {
+      var themeEl = $('toolbox-sp-theme');
+      var modeActive = document.querySelector('#toolbox-sp-mode .segmented-btn.active');
+      var targetActive = document.querySelector('#toolbox-sp-target .segmented-btn.active');
+      var runsEl = $('toolbox-sp-runs');
+      var mode = modeActive ? modeActive.getAttribute('data-value') : 'badge';
+      var target = targetActive ? parseInt(targetActive.getAttribute('data-value'), 10) : 3;
+      var runs = runsEl ? parseInt(runsEl.value, 10) : 60;
+      if (isNaN(runs) || runs <= 0) runs = 60;
+      return {
+        theme: themeEl ? themeEl.value : 'Regulation',
+        mode: mode,
+        target: target,
+        runs: runs,
+        attempts: 0
+      };
+    } else if (toolId === 'reclamation') {
+      var raThemeEl = $('toolbox-ra-theme');
+      var raModeEl = $('toolbox-ra-mode');
+      var raClearEl = $('toolbox-ra-clear-store');
+      return {
+        theme: raThemeEl ? raThemeEl.value : 'RelaunchAnchor',
+        mode: raModeEl ? raModeEl.value : 'RA1',
+        clear_store: raClearEl ? raClearEl.checked : true
+      };
+    } else if (toolId === 'event_shop') {
+      var activePresetChips = $$('#toolbox-es-presets .filter-chip.active');
+      var presets = [];
+      for (var p = 0; p < activePresetChips.length; p++) {
+        presets.push(activePresetChips[p].getAttribute('data-value'));
+      }
+      var customEl = $('toolbox-es-custom');
+      return {
+        blacklist_presets: presets,
+        custom_blacklist: customEl ? customEl.value.trim() : ''
+      };
+    } else if (toolId === 'auto_raise_potential') {
+      var arpEl = $('toolbox-arp-use-normal');
+      return {
+        use_normal_token: arpEl ? arpEl.checked : false
+      };
+    } else if (toolId === 'blackflow_money') {
+      var stopEl = $('toolbox-bf-stop-full');
+      var bfRunsEl = $('toolbox-bf-runs');
+      var bfRuns = bfRunsEl ? parseInt(bfRunsEl.value, 10) : 999;
+      if (isNaN(bfRuns) || bfRuns <= 0) bfRuns = 999;
+      return {
+        stop_when_investment_full: stopEl ? stopEl.checked : true,
+        starts_count: bfRuns
+      };
+    }
+    return {};
+  }
+
+  function updateToolboxButtons(item) {
+    var btnStart = $('btn-start-toolbox');
+    var btnStartText = $('btn-start-toolbox-text');
+    var btnSecondary = $('btn-toolbox-secondary');
+    var btnSecondaryText = $('btn-toolbox-secondary-text');
+    if (!btnStart) return;
+
+    var state = appState.taskState || {};
+    var isRunning = Boolean(state.running);
+    var mutexDisabled = typeof state.task_buttons_disabled === 'boolean' ? state.task_buttons_disabled : isRunning;
+    var taskKind = state.task_kind || 'idle';
+    var isReclamation = item && item.id === 'reclamation';
+
+    if (isReclamation) {
+      if (taskKind === 'reclamation' && isRunning) {
+        btnStart.className = 'btn btn-danger';
+        btnStart.disabled = Boolean(state.ra_button_enabled === false);
+        if (btnStartText) btnStartText.textContent = state.ra_button_text || '停止生息演算';
+      } else {
+        btnStart.className = 'btn btn-primary';
+        btnStart.disabled = mutexDisabled || (item.available === false);
+        if (btnStartText) btnStartText.textContent = state.ra_button_text || '启动生息演算';
+      }
+
+      if (btnSecondary) {
+        btnSecondary.classList.remove('hidden');
+        if (btnSecondaryText) btnSecondaryText.textContent = '肉鸽与生息卡片';
+      }
+    } else {
+      btnStart.className = 'btn btn-primary';
+      btnStart.disabled = mutexDisabled || (!item || item.available === false);
+      if (btnStartText) btnStartText.textContent = '启动任务';
+
+      if (btnSecondary) {
+        btnSecondary.classList.add('hidden');
+      }
     }
   }
 
@@ -1947,6 +2761,8 @@
         if (state.open_wizard) {
           openWizardModal(true);
         }
+
+        loadToolboxCatalog();
 
         if (typeof window.__prtsRunSmokeCheck === 'function') {
           var smoke = window.__prtsRunSmokeCheck();

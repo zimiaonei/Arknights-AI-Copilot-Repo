@@ -46,6 +46,10 @@ Frozen Bridge API Methods (`FROZEN_BRIDGE_METHODS`):
   38. get_logs() -> dict
   39. clear_logs() -> dict
   40. report_smoke_metrics(metrics: dict) -> dict
+  41. get_toolbox_catalog() -> dict
+  42. save_toolbox_config(tool_id: str, params: dict) -> dict
+  43. start_toolbox_task(tool_id: str, params: dict | None = None) -> dict
+  44. set_dry_run(enabled: bool) -> dict
 
 Frozen Push Event Types (`window.__prtsPushBatch([{type, payload}, ...])`):
   - `snapshot`: {
@@ -57,7 +61,7 @@ Frozen Push Event Types (`window.__prtsPushBatch([{type, payload}, ...])`):
       ai: {mode, model_name, is_builtin_api, label},
       growth: {ok, recommended_stages, first_stage, reason},
       annihilation: {week_key, process, done, label},
-      server, post_action,
+      server, post_action, dry_run,
       quick_summary: {fight_mode, auto_push, text},
       roguelike: {
         theme, theme_display, mode_label, target_display,
@@ -143,6 +147,10 @@ FROZEN_BRIDGE_METHODS: Tuple[str, ...] = (
     "get_logs",
     "clear_logs",
     "report_smoke_metrics",
+    "get_toolbox_catalog",
+    "save_toolbox_config",
+    "start_toolbox_task",
+    "set_dry_run",
 )
 
 FROZEN_PUSH_EVENTS: Tuple[str, ...] = (
@@ -229,8 +237,42 @@ LOG_CATEGORIES: List[Tuple[str, str]] = [
     ("tutorial", "教学交接"),
     ("roguelike", "肉鸽AI"),
     ("reclamation", "生息演算"),
+    ("toolbox", "小工具"),
     ("report", "每日战报"),
     ("alert", "告警/错误"),
+]
+
+SECRET_FRONT_ENDINGS: List[Tuple[str, str]] = [
+    ("结局 A", "EndingA"),
+    ("结局 B", "EndingB"),
+    ("结局 C", "EndingC"),
+    ("结局 D", "EndingD"),
+    ("结局 E（默认）", "EndingE"),
+]
+
+SECRET_FRONT_EVENTS: List[Tuple[str, str]] = [
+    ("不优先指定事件", ""),
+    ("支援作战平台", "支援作战平台"),
+    ("游侠", "游侠"),
+    ("诡影迷踪", "诡影迷踪"),
+]
+
+STRONGHOLD_MODES: List[Tuple[str, str]] = [
+    ("刷角标（完整通关）", "badge"),
+    ("刷分（放生速通）", "score"),
+]
+
+STRONGHOLD_TARGETS: List[Tuple[str, int]] = [
+    ("金色角标（通关 3 次）", 3),
+    ("彩色角标（通关 6 次）", 6),
+]
+
+EVENT_SHOP_BLACKLIST_PRESETS: List[Tuple[str, str]] = [
+    ("数据增补仪", "数据增补仪"),
+    ("数据增补条", "数据增补条"),
+    ("龙门币", "龙门币"),
+    ("家具零件", "家具零件"),
+    ("无限池/其他", "其他"),
 ]
 
 
@@ -311,12 +353,16 @@ def classify_log_tag(line: str) -> str:
         return "roguelike"
     if any(k in line for k in ("[生息演算]", "[RECLAMATION]")):
         return "reclamation"
+    if any(k in line for k in ("[TOOLBOX]", "[牛杂]", "[小工具]")):
+        return "toolbox"
     if "[STORY]" in line or "[剧情跳过]" in line:
         return "story"
     if any(k in line for k in ("[每日战报]", "[战报]", "[DROP]", "[收获]")):
         return "report"
     if any(k in line for k in ("[LOCK]", "[防错关]", "[NET][自愈失败]")):
         return "error"
+    if "[DRY-RUN]" in line or "[演习模式]" in line:
+        return "alert"
     if any(k in line for k in ("[RECOVER]", "[NET]")):
         return "alert"
     if any(k in line for k in ("[ALERT]", "[RECRUIT]", "[WARN]")):
@@ -420,6 +466,11 @@ def get_options_bundle() -> Dict[str, Any]:
         "skip_tasks": [{"key": k, "label": lbl} for k, lbl in SKIP_TASK_OPTIONS],
         "api_presets": list(API_PRESETS),
         "log_categories": [{"key": k, "label": lbl} for k, lbl in LOG_CATEGORIES],
+        "secret_front_endings": [{"label": lbl, "value": val} for lbl, val in SECRET_FRONT_ENDINGS],
+        "secret_front_events": [{"label": lbl, "value": val} for lbl, val in SECRET_FRONT_EVENTS],
+        "stronghold_modes": [{"label": lbl, "value": val} for lbl, val in STRONGHOLD_MODES],
+        "stronghold_targets": [{"label": lbl, "value": val} for lbl, val in STRONGHOLD_TARGETS],
+        "event_shop_presets": [{"label": lbl, "value": val} for lbl, val in EVENT_SHOP_BLACKLIST_PRESETS],
     }
 
 

@@ -139,15 +139,14 @@ TECH_TREE_CANVAS_ROI_1280: Tuple[int, int, int, int] = (103, 116, 1087, 460)
 # 1) Left/Right edge page-turn arrows: x < 0.08 and x > 0.93
 # 2) Top navigation bar: y < 0.16
 # 3) Bottom detail bar: y > 0.80
-# 4) Bottom-left attribute overview arch ('64/78 已重构'): x < 0.18, y > 0.62 (plus lower wide base x <= 0.22, y >= 0.72)
+# 4) Bottom-left attribute overview arch ('64/78 已重构'): tightened to x < 0.175, y > 0.63 so adjacent bottom-row small squares are preserved
 # 5) Top-right points display: x >= 0.78, y <= 0.20
 TECH_TREE_FORBIDDEN_ZONES_NORM: Tuple[Tuple[float, float, float, float], ...] = (
     (0.0, 0.0, 0.08, 1.0),
     (0.93, 0.0, 1.0, 1.0),
     (0.0, 0.0, 1.0, 0.16),
     (0.0, 0.80, 1.0, 1.0),
-    (0.0, 0.62, 0.18, 1.0),
-    (0.0, 0.72, 0.22, 1.0),
+    (0.0, 0.63, 0.175, 1.0),
     (0.78, 0.0, 1.0, 0.20),
 )
 # Bottom-right confirm/upgrade button ROI (unique ground-truth for upgrade action): x in [0.72, 0.99], y in [0.84, 0.99]
@@ -160,6 +159,18 @@ TECH_TREE_RETURN_ICON_ROI_1280: Tuple[int, int, int, int] = (0, 0, 180, 86)
 # Top-right remaining points ROI: x in [0.78, 0.99], y in [0.02, 0.18]
 TECH_TREE_TOP_RIGHT_POINTS_ROI_NORM: Tuple[float, float, float, float] = (0.78, 0.02, 0.99, 0.18)
 TECH_TREE_TOP_RIGHT_POINTS_ROI_1280: Tuple[int, int, int, int] = (998, 14, 269, 116)
+# Bottom-left progress counter badge ROI ('72/78 已重构' etc.): x in [0.0, 0.33], y in [0.53, 1.0]
+TECH_TREE_PROGRESS_BADGE_ROI_1280: Tuple[int, int, int, int] = (0, 380, 420, 340)
+_TECH_TREE_PROGRESS_BADGE_KEYWORDS: Tuple[str, ...] = (
+    "已重构",
+    "已塑造",
+    "已激活",
+    "已解锁",
+    "已点亮",
+    "已习得",
+    "已演化",
+    "已研习",
+)
 # Fallback extended bottom-right action quadrant ONLY for unrendered blank-canvas mock tests
 _TECH_TREE_CONFIRM_BTN_COMPAT_ROI_1280: Tuple[int, int, int, int] = (920, 540, 350, 175)
 
@@ -2466,18 +2477,19 @@ def _verify_entered_tech_tree_panel(
             time.sleep(0.8)
             return {"ok": False, "wrong_panel": wrong_kw, "returned": True, "img": verify_img, "boxes": verify_boxes}
 
-    # 4. Strict tech-tree admission check: top '<' + house icon + top-right points indicator
+    # 4. Tech-tree admission check: top '<' + house icon + (top-right points indicator or bottom-left progress badge)
     tech_name = str(active_profile.get("tech_tree", {}).get("name") or "")
     has_ret = detect_tech_tree_return_icon(verify_img, maa_dir=maa_dir)
     has_home = detect_tech_tree_home_icon(verify_img, maa_dir=maa_dir, boxes=verify_boxes)
+    has_progress_badge, _ = _detect_tech_tree_progress_badge(verify_boxes)
     has_points_indicator, pts_val = _has_top_right_tech_points_indicator(
         verify_img, verify_boxes, allow_roi_ocr=True, cancel_event=cancel_event
     )
 
-    if has_ret and has_home and has_points_indicator:
+    if has_ret and has_home and (has_points_indicator or has_progress_badge):
         _emit(
             log_callback,
-            f"[RL-TECH] 二级界面准入校验通过（< + 房子图标 + 右上角点数={pts_val}），已确认进入「{tech_name}」科技树面板。",
+            f"[RL-TECH] 二级界面准入校验通过（< + 房子图标 + 右上角点数={pts_val} / 进度徽章={has_progress_badge}），已确认进入「{tech_name}」科技树面板。",
         )
         return {
             "ok": True,
@@ -2680,16 +2692,14 @@ def is_point_in_tech_tree_forbidden_zone(cx: int, cy: int) -> bool:
     """Return True if a 1280x720 coordinate falls outside the safe clickable tech-tree node canvas
     x in [0.08, 0.93], y in [0.16, 0.80] or inside forbidden UI zones:
       - Left/Right edge page-turn arrows ('<-'/'->': x < 0.08 or x > 0.93)
-      - Bottom-left '64/78 已重构' attribute overview arch (x < 0.18 & y > 0.62; lower wide base x <= 0.22 & y >= 0.72)
+      - Bottom-left '64/78 已重构' attribute overview arch (x < 0.175 & y > 0.63)
       - Top navigation bar (y < 0.16), bottom detail bar (y > 0.80), top-right points bar (x >= 0.78 & y <= 0.20)
     """
     nx = float(cx) / 1280.0
     ny = float(cy) / 720.0
     if nx < 0.08 or nx > 0.93 or ny < 0.16 or ny > 0.80:
         return True
-    if nx < 0.18 and ny > 0.62:
-        return True
-    if nx <= 0.22 and ny >= 0.72:
+    if nx < 0.175 and ny > 0.63:
         return True
     if nx >= 0.78 and ny <= 0.20:
         return True
@@ -2698,12 +2708,12 @@ def is_point_in_tech_tree_forbidden_zone(cx: int, cy: int) -> bool:
 
 def is_point_near_tech_tree_arch_edge(cx: int, cy: int) -> bool:
     """Return True if a non-forbidden candidate coordinate hugs the outer edge of the bottom-left
-    '64/78 已重构' arch (x in [0.08, 0.24], y in [0.56, 0.80]), where tapping risks opening the overview modal."""
+    '64/78 已重构' arch (x in [0.08, 0.25], y in [0.60, 0.80]), where tapping risks opening the overview modal."""
     if is_point_in_tech_tree_forbidden_zone(cx, cy):
         return False
     nx = float(cx) / 1280.0
     ny = float(cy) / 720.0
-    return (0.08 <= nx <= 0.24) and (0.56 <= ny <= 0.80)
+    return (0.08 <= nx <= 0.25) and (0.60 <= ny <= 0.80)
 
 
 def _has_rendered_ui_chrome(img: Optional[Image.Image]) -> bool:
@@ -2716,6 +2726,15 @@ def _has_rendered_ui_chrome(img: Optional[Image.Image]) -> bool:
     top_std = float(np.max(np.std(arr[:100, :, :], axis=(0, 1))))
     bot_std = float(np.max(np.std(arr[600:, :, :], axis=(0, 1))))
     return (top_std >= 2.0) or (bot_std >= 2.0)
+
+
+def _has_rendered_tech_tree_canvas(img: Optional[Image.Image]) -> bool:
+    """Return True if the tech-tree node canvas interior (y in [116,576], x in [103,1190]) has rendered content."""
+    if np is None or img is None:
+        return False
+    arr = np.asarray(img.convert("RGB").resize((1280, 720), Image.Resampling.BILINEAR), dtype=np.float32)
+    canvas = arr[116:576, 103:1190, :]
+    return float(np.max(np.std(canvas, axis=(0, 1)))) >= 2.0
 
 
 def _detect_top_bar_white_icon(
@@ -2856,8 +2875,8 @@ def extract_tech_tree_remaining_points(
             roi=TECH_TREE_TOP_RIGHT_POINTS_ROI_1280,
             include_inverted=True,
             include_binarized=True,
-            upscale_factor=2.5,
-            pad_border=10,
+            upscale_factor=3.0,
+            pad_border=24,
             cancel_event=cancel_event,
         )
         return _parse_points_from_boxes(roi_boxes or [])
@@ -2894,8 +2913,8 @@ def _has_top_right_tech_points_indicator(
             roi=TECH_TREE_TOP_RIGHT_POINTS_ROI_1280,
             include_inverted=True,
             include_binarized=True,
-            upscale_factor=2.5,
-            pad_border=10,
+            upscale_factor=3.0,
+            pad_border=24,
             cancel_event=cancel_event,
         )
         pts_roi = extract_tech_tree_remaining_points(img, roi_boxes or [], allow_roi_ocr=False, cancel_event=cancel_event)
@@ -2904,6 +2923,27 @@ def _has_top_right_tech_points_indicator(
         if _has_points_name_in_boxes(roi_boxes or []):
             return True, None
     return False, None
+
+
+def _detect_tech_tree_progress_badge(
+    boxes: Sequence[Dict[str, Any]],
+) -> Tuple[bool, bool]:
+    """Detect bottom-left tech-tree completion badge (e.g. '72/78 已重构' / '72/78').
+    Returns ``(has_badge, has_badge_with_keyword)``.
+    """
+    has_ratio = False
+    has_kw = False
+    for b in boxes or []:
+        if not _box_in_roi(b, TECH_TREE_PROGRESS_BADGE_ROI_1280, pad=12):
+            continue
+        txt = _box_text_compact(b)
+        if not txt:
+            continue
+        if re.search(r"\d{1,3}\s*/\s*\d{1,3}", txt):
+            has_ratio = True
+        if any(kw in txt for kw in _TECH_TREE_PROGRESS_BADGE_KEYWORDS):
+            has_kw = True
+    return (has_ratio or has_kw), (has_ratio and has_kw)
 
 
 def _is_tech_tree_overview_overlay(
@@ -2943,12 +2983,15 @@ def classify_tech_tree_page_guard(
 ) -> Dict[str, Any]:
     """Per-round Page Guard inside the tech-tree upgrade loop.
 
-    Strict admission rules:
+    Negative hard intercepts run first:
       - Theme selection page ('进入主题' / '添加到终端' / '查看收藏' / '该主题已全额收录') -> ``'theme_select_page'``
-      - Wrong sub-panels (archive / investment / exhibition / medal set) -> ``'wrong_page'``
       - Theme lobby ('开始探险' / '开始探索' / '蚀刻章套组' / '常规行动') -> ``'lobby'``
+      - Wrong sub-panels (archive / investment / exhibition / medal set) -> ``'wrong_page'``
       - Attribute overview overlay (no home icon + >=2 stat groups) -> ``'overview_overlay'``
-      - Tech-tree canvas ONLY when top '<' AND house icon AND top-right points indicator (number or name) ALL hold!
+
+    Positive redundant confirmation (tolerates occasional single-digit OCR miss like '5'):
+      - Tech-tree canvas is confirmed when NO negative markers hit AND at least one redundant pair holds:
+        (top '<' + house icon), OR (house icon + points/progress badge), OR (progress badge + '<'/points/keyword).
     """
     joined = "".join(_box_text_compact(b) for b in (boxes or []))
 
@@ -2959,10 +3002,24 @@ def classify_tech_tree_page_guard(
             "wrong_keyword": "theme_select_page",
             "has_home_icon": False,
             "has_return_icon": False,
+            "has_progress_badge": False,
+            "has_points_indicator": False,
             "points": None,
         }
 
-    # 2. Explicit mis-entry pages (巫仪档案库 / 想象实体图鉴 / 虚构展览 / 设为活动主界面背景 / 投资系统 etc.)
+    # 2. Returned to Roguelike theme lobby -> stop safely before wrong_page checks (lobby often shows 蚀刻章套组)
+    if any(lk in joined for lk in ("开始探险", "继续探险", "开始探索", "继续探索", "蚀刻章套组", "常规行动")):
+        return {
+            "status": "lobby",
+            "wrong_keyword": "theme_lobby",
+            "has_home_icon": False,
+            "has_return_icon": False,
+            "has_progress_badge": False,
+            "has_points_indicator": False,
+            "points": None,
+        }
+
+    # 3. Explicit mis-entry pages (巫仪档案库 / 想象实体图鉴 / 虚构展览 / 设为活动主界面背景 / 投资系统 etc.)
     for wrong_kw in _TECH_TREE_PAGE_GUARD_WRONG_KEYWORDS:
         if wrong_kw in joined:
             return {
@@ -2970,18 +3027,10 @@ def classify_tech_tree_page_guard(
                 "wrong_keyword": wrong_kw,
                 "has_home_icon": False,
                 "has_return_icon": False,
+                "has_progress_badge": False,
+                "has_points_indicator": False,
                 "points": None,
             }
-
-    # 3. Returned to Roguelike theme lobby -> stop safely (never click nodes or swipe on lobby!)
-    if any(lk in joined for lk in ("开始探险", "继续探险", "开始探索", "继续探索", "蚀刻章套组", "常规行动")):
-        return {
-            "status": "lobby",
-            "wrong_keyword": "theme_lobby",
-            "has_home_icon": False,
-            "has_return_icon": False,
-            "points": None,
-        }
 
     has_home = detect_tech_tree_home_icon(img, maa_dir=maa_dir, boxes=boxes)
     has_ret = detect_tech_tree_return_icon(img, maa_dir=maa_dir)
@@ -2993,21 +3042,31 @@ def classify_tech_tree_page_guard(
             "wrong_keyword": "overview_overlay",
             "has_home_icon": has_home,
             "has_return_icon": has_ret,
+            "has_progress_badge": False,
+            "has_points_indicator": False,
             "points": None,
         }
 
+    has_progress_badge, has_progress_badge_kw = _detect_tech_tree_progress_badge(boxes)
     has_points_indicator, points = _has_top_right_tech_points_indicator(
         img, boxes, allow_roi_ocr=True, cancel_event=cancel_event
     )
 
-    # 5. Strict positive tech-tree canvas confirmation:
-    #    Must simultaneously satisfy top '<' + house icon + top-right points indicator (x in [0.78,0.99], y in [0.02,0.18])
-    if has_home and has_ret and has_points_indicator:
+    # 5. Redundant positive tech-tree canvas confirmation:
+    #    Do NOT require all 3 simultaneously so single-digit OCR misses (e.g. '5') never abort a valid tech tree.
+    confirmed_tech_tree = (
+        (has_ret and has_home)
+        or (has_home and (has_points_indicator or has_progress_badge))
+        or (has_progress_badge and (has_ret or has_points_indicator or has_progress_badge_kw))
+    )
+    if confirmed_tech_tree:
         return {
             "status": "tech_tree",
             "wrong_keyword": "",
-            "has_home_icon": True,
-            "has_return_icon": True,
+            "has_home_icon": has_home,
+            "has_return_icon": has_ret,
+            "has_progress_badge": has_progress_badge,
+            "has_points_indicator": has_points_indicator,
             "points": points,
         }
 
@@ -3016,6 +3075,8 @@ def classify_tech_tree_page_guard(
         "wrong_keyword": "unverified_screen",
         "has_home_icon": has_home,
         "has_return_icon": has_ret,
+        "has_progress_badge": has_progress_badge,
+        "has_points_indicator": has_points_indicator,
         "points": points,
     }
 
@@ -3064,7 +3125,7 @@ def _execute_and_verify_tech_upgrade(
                 f"[RL-TECH] 首击「{btn_label}」({ux},{uy})后点数未扣除，补点一次以防窗口失焦...",
             )
         stage_pilot.adb_tap_norm(adb_path, adb_addr, ux, uy, before_img.width, before_img.height)
-        time.sleep(0.6)
+        time.sleep(0.85)
 
         after_img = stage_pilot.adb_screencap_image(adb_path, adb_addr)
         if after_img is None:
@@ -3193,6 +3254,7 @@ def evaluate_tech_tree_confirm_button(
     detail_img: Image.Image,
     detail_boxes: Sequence[Dict[str, Any]],
     cancel_event: Optional[threading.Event] = None,
+    remaining_points: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Single source of truth for tech-tree upgrade confirmation: inspect bottom-right button ROI
     (x in [0.72, 0.99], y in [0.84, 0.99]) via OCR + color verification.
@@ -3238,6 +3300,14 @@ def evaluate_tech_tree_confirm_button(
             strict_boxes = list(roi_ocr_boxes)
             strict_joined = "".join(_box_text_compact(b) for b in strict_boxes)
 
+    cost_match = re.search(r"[xX×\*]\s*(\d{1,4})", strict_joined)
+    if cost_match is None:
+        cost_match = re.search(
+            r"(?:确认升级|确认激活|确认解锁|确认重构|确认强化|确认塑造|确认点亮|确认演化|确认研习|确认筹备)\s*(\d{1,4})",
+            strict_joined,
+        )
+    required_cost: Optional[int] = int(cost_match.group(1)) if cost_match else None
+
     def _classify_unavailable(kw: str) -> Tuple[str, bool, bool, bool]:
         if kw in _TECH_ALREADY_UPGRADED_TEXTS:
             return "already_upgraded", False, True, False
@@ -3259,11 +3329,24 @@ def evaluate_tech_tree_confirm_button(
                 "already_upgraded": already_up,
                 "is_locked": is_locked,
                 "color_state": color_state,
+                "required_cost": required_cost,
                 "button": None,
             }
 
-    # Explicit grey disabled button state -> reject even if OCR misread the disabled label
+    # Explicit grey disabled button state -> classify as insufficient_points when required_cost > remaining_points, else disabled_grey
     if color_state == "disabled_grey":
+        if required_cost is not None and remaining_points is not None and required_cost > remaining_points:
+            return {
+                "valid": False,
+                "reason": f"disabled_grey_insufficient_points(cost={required_cost}>pts={remaining_points})",
+                "button_status": "insufficient_points",
+                "insufficient_points": True,
+                "already_upgraded": False,
+                "is_locked": False,
+                "color_state": color_state,
+                "required_cost": required_cost,
+                "button": None,
+            }
         return {
             "valid": False,
             "reason": "disabled_grey_button",
@@ -3272,6 +3355,7 @@ def evaluate_tech_tree_confirm_button(
             "already_upgraded": False,
             "is_locked": False,
             "color_state": color_state,
+            "required_cost": required_cost,
             "button": None,
         }
 
@@ -3297,6 +3381,7 @@ def evaluate_tech_tree_confirm_button(
                     "already_upgraded": already_up,
                     "is_locked": is_locked,
                     "color_state": color_state,
+                    "required_cost": required_cost,
                     "button": None,
                 }
         btn = _find_matching_ocr_box(
@@ -3314,6 +3399,7 @@ def evaluate_tech_tree_confirm_button(
             "already_upgraded": False,
             "is_locked": False,
             "color_state": color_state,
+            "required_cost": required_cost,
             "button": None,
         }
 
@@ -3327,6 +3413,21 @@ def evaluate_tech_tree_confirm_button(
             "already_upgraded": False,
             "is_locked": False,
             "color_state": color_state,
+            "required_cost": required_cost,
+            "button": None,
+        }
+
+    # Explicit cost vs remaining_points check regardless of button color state
+    if required_cost is not None and remaining_points is not None and required_cost > remaining_points:
+        return {
+            "valid": False,
+            "reason": f"insufficient_points(cost={required_cost}>pts={remaining_points})",
+            "button_status": "insufficient_points",
+            "insufficient_points": True,
+            "already_upgraded": False,
+            "is_locked": False,
+            "color_state": color_state,
+            "required_cost": required_cost,
             "button": None,
         }
 
@@ -3348,6 +3449,7 @@ def evaluate_tech_tree_confirm_button(
                 "already_upgraded": already_up,
                 "is_locked": is_locked,
                 "color_state": color_state,
+                "required_cost": required_cost,
                 "button": None,
             }
 
@@ -3359,6 +3461,7 @@ def evaluate_tech_tree_confirm_button(
         "already_upgraded": False,
         "is_locked": False,
         "color_state": color_state,
+        "required_cost": required_cost,
         "button": btn,
         "detail_text": desc_text,
     }
@@ -3418,32 +3521,32 @@ def _evaluate_tech_node_halo_at(
     grad: "np.ndarray",
     est_r: int = 28,
 ) -> Optional[Dict[str, Any]]:
-    """Verify whether (cx, cy) is a frontier upgradeable grey stone tablet surrounded by a closed
-    high-gradient bright white glowing outline, strictly rejecting solid pure-white upgraded icons,
-    dark locked stone tablets, and smooth warm-white background light patches.
+    """Verify whether (cx, cy) is a frontier upgradeable grey stone tablet or small square stat node
+    surrounded by a closed high-gradient bright white glowing outline, strictly rejecting solid pure-white
+    upgraded icons, dark locked stone tablets, and smooth warm-white background light patches.
     """
     h, w = luma.shape
     if is_point_in_tech_tree_forbidden_zone(cx, cy):
         return None
 
-    # Test adaptive radii around est_r so circles, squares, octagons, and tall steles all match cleanly
+    # Test adaptive radii around est_r so small bottom-row square stat nodes (~16-36px) and large steles all match cleanly
     cand_radii = sorted(
         {
-            max(16, min(46, int(est_r) + delta))
-            for delta in (-8, -4, 0, 4, 8)
+            max(8, min(46, int(est_r) + delta))
+            for delta in (-6, -3, 0, 3, 6)
         }
-        | {22, 28, 34}
+        | {10, 14, 18, 24, 30, 36}
     )
 
     best_halo: Optional[Dict[str, Any]] = None
     for rad in cand_radii:
-        # 1. Central 40% core region: reject solid pure-white upgraded nodes!
-        rc = max(7, int(round(0.42 * rad)))
+        # 1. Central ~40% core region: reject solid pure-white upgraded nodes!
+        rc = max(3, int(round(0.40 * rad)))
         cy0, cy1 = max(0, cy - rc), min(h, cy + rc + 1)
         cx0, cx1 = max(0, cx - rc), min(w, cx + rc + 1)
         core_l = luma[cy0:cy1, cx0:cx1]
         core_s = sat[cy0:cy1, cx0:cx1]
-        if core_l.size < 25:
+        if core_l.size < 16:
             continue
         core_mean = float(np.mean(core_l))
         core_sat_mean = float(np.mean(core_s))
@@ -3452,13 +3555,33 @@ def _evaluate_tech_node_halo_at(
         # Hard reject solid pure-white upgraded icons & bright warm-white light cores
         if core_white_ratio >= 0.42 or (core_mean >= 190.0 and core_sat_mean <= 48.0):
             continue
-        # Stone tablet interior must be mid-grey (not pitch-black void, not blinding white)
-        if not (30.0 <= core_mean <= 178.0):
+        # Stone tablet / small square interior must be mid-grey (not pitch-black void, not blinding white)
+        if not (28.0 <= core_mean <= 178.0):
             continue
 
-        # 2. 8-sector closed glowing white outer rim check across radial band [0.55*R, 1.45*R]
-        r_steps = np.linspace(max(10.0, 0.55 * rad), min(66.0, 1.45 * rad), 10, dtype=np.float32)
-        out_steps = np.linspace(min(74.0, 1.55 * rad), min(88.0, 1.88 * rad), 4, dtype=np.float32)
+        # 1b. Interior pattern & saturation inspection (strictly inside 0.55*rad halo inner edge)
+        r_in = max(3, int(round(0.48 * rad)))
+        iy0, iy1 = max(0, cy - r_in), min(h, cy + r_in + 1)
+        ix0, ix1 = max(0, cx - r_in), min(w, cx + r_in + 1)
+        inner_l = luma[iy0:iy1, ix0:ix1]
+        inner_s = sat[iy0:iy1, ix0:ix1]
+        if inner_l.size < 16:
+            continue
+        inner_sat_mean = float(np.mean(inner_s))
+        inner_color_ratio = float(np.mean(inner_s >= 42.0))
+        inner_dark_ratio = float(np.mean(inner_l <= 52.0))
+        inner_bright_ratio = float(np.mean((inner_l >= 180.0) & (inner_s <= 50.0)))
+        inner_std = float(np.std(inner_l))
+
+        # Hard reject already-upgraded large steles with colored crests or dark-base + bright-white emblem
+        if inner_sat_mean >= 28.0 or inner_color_ratio >= 0.15:
+            continue
+        if inner_dark_ratio >= 0.25 and (inner_bright_ratio >= 0.10 or inner_std >= 46.0):
+            continue
+
+        # 2. 8-sector closed glowing white outer rim check across radial band [0.55*R, 1.52*R]
+        r_steps = np.linspace(max(6.0, 0.55 * rad), min(68.0, 1.52 * rad), 14, dtype=np.float32)
+        out_steps = np.linspace(max(15.0, 1.62 * rad), min(92.0, 2.08 * rad), 5, dtype=np.float32)
 
         valid_sectors = 0
         valid_cardinals = 0
@@ -3510,6 +3633,95 @@ def _evaluate_tech_node_halo_at(
             and ring_grad_med >= 20.0
             and ring_minus_outer >= 22.0
         ):
+            # 3. Check incoming LEFT white line & outgoing RIGHT white vs black connecting lines
+            lx0 = max(0, cx - int(round(rad * 1.15)) - 54)
+            lx1 = max(lx0 + 4, cx - int(round(rad * 1.02)) - 2)
+            ly0 = max(0, cy - max(20, int(round(rad * 0.90))))
+            ly1 = min(h, cy + max(20, int(round(rad * 0.90))))
+            strip_l = luma[ly0:ly1, lx0:lx1]
+            strip_s = sat[ly0:ly1, lx0:lx1]
+            strip_bg = bg_local[ly0:ly1, lx0:lx1]
+            has_left_line = False
+            if strip_l.size > 0:
+                glow_line_px = (strip_l >= 165.0) & (strip_s <= 52.0) & ((strip_l - strip_bg) >= 22.0)
+                col_hits = np.any(glow_line_px, axis=0)
+                has_left_line = (
+                    int(np.sum(glow_line_px)) >= 10
+                    and float(np.mean(col_hits)) >= 0.25
+                    and float(np.mean(glow_line_px)) <= 0.55
+                )
+
+            rx0 = min(w - 4, cx + int(round(rad * 1.02)) + 2)
+            rx1 = min(w, cx + int(round(rad * 1.15)) + 44)
+            ry0 = max(0, cy - max(18, int(round(rad * 0.85))))
+            ry1 = min(h, cy + max(18, int(round(rad * 0.85))))
+            r_strip_l = luma[ry0:ry1, rx0:rx1]
+            r_strip_s = sat[ry0:ry1, rx0:rx1]
+            r_strip_bg = bg_local[ry0:ry1, rx0:rx1]
+            has_right_glow_line = False
+            has_right_dark_line = False
+            if r_strip_l.size > 0 and (rx1 - rx0) >= 6:
+                r_glow_px = (r_strip_l >= 165.0) & (r_strip_s <= 52.0) & ((r_strip_l - r_strip_bg) >= 22.0)
+                r_col_hits = np.any(r_glow_px, axis=0)
+                if (
+                    int(np.sum(r_glow_px)) >= 10
+                    and float(np.mean(r_col_hits)) >= 0.25
+                    and float(np.mean(r_glow_px)) <= 0.50
+                    and bool(np.any(r_col_hits[:min(12, r_col_hits.size)]))
+                ):
+                    has_right_glow_line = True
+
+                r_dark_px = (r_strip_l <= 45.0) & ((r_strip_bg - r_strip_l) >= 10.0)
+                d_col_hits = np.any(r_dark_px, axis=0)
+                if (
+                    int(np.sum(r_dark_px)) >= 8
+                    and float(np.mean(d_col_hits)) >= 0.22
+                    and float(np.mean(r_dark_px)) <= 0.55
+                    and bool(np.any(d_col_hits[:min(14, d_col_hits.size)]))
+                ):
+                    has_right_dark_line = True
+
+            # Hard reject already-upgraded stele emitting a right-side bright white line with dark/patterned core
+            if (
+                has_right_glow_line
+                and not has_right_dark_line
+                and (
+                    inner_dark_ratio >= 0.15
+                    or inner_bright_ratio >= 0.08
+                    or inner_sat_mean >= 16.0
+                    or inner_std >= 30.0
+                    or core_white_ratio >= 0.15
+                )
+            ):
+                continue
+
+            is_clean_grey_interior = (
+                (inner_sat_mean <= 20.0)
+                and (inner_color_ratio <= 0.08)
+                and (inner_dark_ratio <= 0.15)
+                and (inner_bright_ratio <= 0.08)
+                and (60.0 <= core_mean <= 168.0)
+            )
+            unlockable_score = (
+                valid_sectors * 10.0
+                + min(100.0, ring_minus_core) * 0.6
+                + min(60.0, ring_luma_med - 175.0) * 0.5
+                + max(0.0, 28.0 - inner_sat_mean) * 2.0
+                + (25.0 if is_clean_grey_interior else 0.0)
+                + (15.0 if has_left_line else 0.0)
+                + (15.0 if has_right_dark_line else 0.0)
+                - inner_dark_ratio * 80.0
+                - inner_bright_ratio * 100.0
+                - inner_sat_mean * 1.5
+                - (90.0 if has_right_glow_line else 0.0)
+            )
+            if has_right_glow_line:
+                frontier_tier = 2
+            elif is_clean_grey_interior:
+                frontier_tier = 0
+            else:
+                frontier_tier = 1
+
             quality = (
                 valid_sectors * 15.0
                 + min(120.0, ring_minus_core)
@@ -3518,24 +3730,6 @@ def _evaluate_tech_node_halo_at(
                 - core_white_ratio * 120.0
             )
             if best_halo is None or quality > best_halo["halo_score"]:
-                # 3. Check for bright white glowing connecting line entering from the LEFT side
-                lx0 = max(0, cx - int(round(rad * 1.15)) - 54)
-                lx1 = max(lx0 + 4, cx - int(round(rad * 1.02)) - 2)
-                ly0 = max(0, cy - max(20, int(round(rad * 0.90))))
-                ly1 = min(h, cy + max(20, int(round(rad * 0.90))))
-                strip_l = luma[ly0:ly1, lx0:lx1]
-                strip_s = sat[ly0:ly1, lx0:lx1]
-                strip_bg = bg_local[ly0:ly1, lx0:lx1]
-                has_left_line = False
-                if strip_l.size > 0:
-                    glow_line_px = (strip_l >= 165.0) & (strip_s <= 52.0) & ((strip_l - strip_bg) >= 22.0)
-                    col_hits = np.any(glow_line_px, axis=0)
-                    has_left_line = (
-                        int(np.sum(glow_line_px)) >= 10
-                        and float(np.mean(col_hits)) >= 0.25
-                        and float(np.mean(glow_line_px)) <= 0.55
-                    )
-
                 best_halo = {
                     "cx": int(cx),
                     "cy": int(cy),
@@ -3543,12 +3737,18 @@ def _evaluate_tech_node_halo_at(
                     "lit_pixels": int(round(valid_sectors * rad * 2.5)),
                     "has_halo": True,
                     "has_left_glow_line": has_left_line,
+                    "has_right_glow_line": has_right_glow_line,
+                    "has_right_dark_line": has_right_dark_line,
                     "core_white_ratio": round(core_white_ratio, 4),
                     "core_mean": round(core_mean, 1),
+                    "inner_sat_mean": round(inner_sat_mean, 2),
                     "ring_luma": round(ring_luma_med, 1),
                     "halo_sectors": int(valid_sectors),
                     "halo_score": round(quality, 2),
+                    "unlockable_score": round(unlockable_score, 2),
+                    "frontier_tier": int(frontier_tier),
                     "node_kind": "glowing_frontier",
+                    "node_size_class": "small_square" if rad <= 17 else "large_tablet",
                 }
     return best_halo
 
@@ -3581,15 +3781,15 @@ def detect_upgradeable_tech_nodes(
     img: Image.Image,
     canvas_roi: Tuple[int, int, int, int] = TECH_TREE_CANVAS_ROI_1280,
     brightness_threshold: float = 175.0,
-    min_cluster_pixels: int = 24,
+    min_cluster_pixels: int = 16,
 ) -> List[Dict[str, Any]]:
-    """Detect upgradeable frontier nodes in a tech-tree screenshot.
+    """Detect upgradeable frontier nodes in a tech-tree screenshot (large stone tablets & small bottom-row squares).
 
     Strictly limits scanning to ``x in [0.08, 0.93], y in [0.16, 0.80]`` (excluding left/right page arrows
-    and the bottom-left ``64/78 已重构`` arch ``x < 0.18, y > 0.62``) and classifies nodes by local structure:
-      1) Eliminates already-upgraded solid pure-white icons (high pure-white pixel ratio in central 40% core).
+    and the tightened bottom-left ``64/78 已重构`` arch ``x < 0.175, y > 0.63``) and classifies nodes by local structure:
+      1) Eliminates already-upgraded solid pure-white icons (high pure-white pixel ratio in central core).
       2) Eliminates dark locked tablets and smooth warm-white background glow patches (never uses global brightness mean).
-      3) Extracts closed high-gradient bright white glowing-halo grey stone tablets, preferring left-connected frontier nodes.
+      3) Extracts closed high-gradient bright white glowing-halo grey stone tablets & small square stat nodes.
       4) Sorts candidates strictly left-to-right (X ascending, then Y ascending) within priority tier.
     """
     if np is None or img is None:
@@ -3609,11 +3809,13 @@ def detect_upgradeable_tech_nodes(
 
     # ------------------------------------------------------------------
     # Stream A: Multi-scale closed glowing white halo proposal (2x max-pooled -> 640x360)
-    # Preserves razor-thin 2-3px glowing white outlines while ignoring straight connecting lines
-    # and smooth warm-white background flares!
+    # Use a padded rim mask so borders of nodes sitting close to safe-zone edges are not clipped;
+    # node centers remain strictly gated by allowed_mask & is_point_in_tech_tree_forbidden_zone.
     # ------------------------------------------------------------------
+    rim_bounds_mask = np.zeros((720, 1280), dtype=bool)
+    rim_bounds_mask[100:592, 84:1208] = True
     white_rim_px = (
-        allowed_mask
+        rim_bounds_mask
         & (luma >= max(160.0, brightness_threshold - 10.0))
         & (sat <= 55.0)
         & (((luma - bg_local) >= 18.0) | (grad >= 20.0))
@@ -3628,10 +3830,10 @@ def detect_upgradeable_tech_nodes(
     best_score_map = np.zeros((360, 640), dtype=np.float32)
     best_rad_map = np.full((360, 640), 28, dtype=np.int32)
 
-    for rh in (10, 14, 18, 22):
-        r_strip = max(2, rh // 4)
+    for rh in (5, 7, 9, 12, 16, 20, 24):
+        r_strip = 1 if rh <= 7 else max(2, rh // 4)
         rim_s = _box_mean_2d(rim_h, radius=r_strip)
-        r_core = max(3, int(round(0.45 * rh)))
+        r_core = max(2, int(round(0.38 * rh)))
         core_l = _box_mean_2d(luma_h, radius=r_core)
         core_w = _box_mean_2d(cwhite_h, radius=r_core)
 
@@ -3643,10 +3845,22 @@ def detect_upgradeable_tech_nodes(
         bot = rim_s[2 * rh : 360, sl_x]
         lft = rim_s[sl_y, 0 : 640 - 2 * rh]
         rgt = rim_s[sl_y, 2 * rh : 640]
-        tl = rim_s[rh - d : 360 - rh - d, rh - d : 640 - rh - d]
-        tr = rim_s[rh - d : 360 - rh - d, rh + d : 640 - rh + d]
-        bl = rim_s[rh + d : 360 - rh + d, rh - d : 640 - rh - d]
-        br = rim_s[rh + d : 360 - rh + d, rh + d : 640 - rh + d]
+        tl = np.maximum(
+            rim_s[rh - d : 360 - rh - d, rh - d : 640 - rh - d],
+            rim_s[0 : 360 - 2 * rh, 0 : 640 - 2 * rh],
+        )
+        tr = np.maximum(
+            rim_s[rh - d : 360 - rh - d, rh + d : 640 - rh + d],
+            rim_s[0 : 360 - 2 * rh, 2 * rh : 640],
+        )
+        bl = np.maximum(
+            rim_s[rh + d : 360 - rh + d, rh - d : 640 - rh - d],
+            rim_s[2 * rh : 360, 0 : 640 - 2 * rh],
+        )
+        br = np.maximum(
+            rim_s[rh + d : 360 - rh + d, rh + d : 640 - rh + d],
+            rim_s[2 * rh : 360, 2 * rh : 640],
+        )
 
         th = 0.075
         card_cnt = (top >= th).astype(np.int8) + (bot >= th).astype(np.int8) + (lft >= th).astype(np.int8) + (rgt >= th).astype(np.int8)
@@ -3658,7 +3872,7 @@ def detect_upgradeable_tech_nodes(
             allow_h[sl_y, sl_x]
             & (core_l[sl_y, sl_x] >= 28.0)
             & (core_l[sl_y, sl_x] <= 180.0)
-            & (core_w[sl_y, sl_x] < 0.42)
+            & (core_w[sl_y, sl_x] < 0.45)
         )
         sc = np.where(
             core_ok & (card_cnt >= 3) & (dir_cnt >= 5),
@@ -3672,14 +3886,14 @@ def detect_upgradeable_tech_nodes(
             sub_best[better] = sc[better]
             best_rad_map[sl_y, sl_x][better] = rh * 2
 
-    # Non-maximum suppression on half-res halo score map (extract up to 32 peaks)
+    # Non-maximum suppression on half-res halo score map (extract up to 48 peaks)
     halo_proposals: List[Tuple[int, int, int, float]] = []
     peak_ys, peak_xs = np.where(best_score_map >= 0.05)
     if peak_ys.size > 0:
         peak_vals = best_score_map[peak_ys, peak_xs]
-        # Fast pre-filter to top 4000 pixels if needed
-        if peak_vals.size > 4000:
-            top_idx = np.argpartition(peak_vals, -4000)[-4000:]
+        # Fast pre-filter to top 6000 pixels if needed
+        if peak_vals.size > 6000:
+            top_idx = np.argpartition(peak_vals, -6000)[-6000:]
             peak_ys = peak_ys[top_idx]
             peak_xs = peak_xs[top_idx]
             peak_vals = peak_vals[top_idx]
@@ -3688,10 +3902,10 @@ def detect_upgradeable_tech_nodes(
             hy = int(peak_ys[idx])
             hx = int(peak_xs[idx])
             val = float(peak_vals[idx])
-            if any(abs(hx - px) < 22 and abs(hy - py) < 22 for px, py, _, _ in halo_proposals):
+            if any(abs(hx - px) < 14 and abs(hy - py) < 14 for px, py, _, _ in halo_proposals):
                 continue
             halo_proposals.append((hx, hy, int(best_rad_map[hy, hx]), val))
-            if len(halo_proposals) >= 32:
+            if len(halo_proposals) >= 48:
                 break
 
     verified_nodes: List[Dict[str, Any]] = []
@@ -3709,10 +3923,10 @@ def detect_upgradeable_tech_nodes(
     bright_cyan = allowed_mask & (b_ch > 180.0) & (g_ch > 160.0) & (r_ch < 150.0) & (sat >= 65.0) & ((luma - bg_local) >= 20.0)
     accent_mask = warm_gold | bright_cyan
 
-    cell = 16
+    cell = 12
     gh, gw = 720 // cell, 1280 // cell
     acc_counts = accent_mask[: gh * cell, : gw * cell].reshape(gh, cell, gw, cell).sum(axis=(1, 3))
-    cell_min = max(8, min_cluster_pixels // 2)
+    cell_min = max(4, min_cluster_pixels // 4)
     visited = np.zeros((gh, gw), dtype=bool)
     accent_candidates: List[Tuple[int, int, int]] = []
     for gy in range(gh):
@@ -3754,51 +3968,76 @@ def detect_upgradeable_tech_nodes(
                     accent_candidates.append((total_px, nx, ny))
 
     for px_cnt, nx, ny in sorted(accent_candidates, key=lambda t: -t[0]):
-        if any(abs(nx - n["cx"]) < 52 and abs(ny - n["cy"]) < 52 for n in verified_nodes):
+        if any(
+            abs(nx - n["cx"]) < max(26, min(48, int(round((14 + int(n.get("radius", 24))) * 0.9))))
+            and abs(ny - n["cy"]) < max(26, min(48, int(round((14 + int(n.get("radius", 24))) * 0.9))))
+            for n in verified_nodes
+        ):
             continue
         # Reject if core is solid pure white or lacks sharp edge gradient
-        core_l = luma[max(0, ny - 10) : min(720, ny + 11), max(0, nx - 10) : min(1280, nx + 11)]
-        core_s = sat[max(0, ny - 10) : min(720, ny + 11), max(0, nx - 10) : min(1280, nx + 11)]
+        core_l = luma[max(0, ny - 7) : min(720, ny + 8), max(0, nx - 7) : min(1280, nx + 8)]
+        core_s = sat[max(0, ny - 7) : min(720, ny + 8), max(0, nx - 7) : min(1280, nx + 8)]
         ring_g = grad[max(0, ny - 32) : min(720, ny + 33), max(0, nx - 32) : min(1280, nx + 33)]
         if core_l.size == 0 or ring_g.size == 0:
             continue
         c_white_ratio = float(np.mean((core_l >= 200.0) & (core_s <= 45.0)))
         if c_white_ratio >= 0.38:
             continue
-        if float(np.mean(core_s)) < 50.0 or float(np.percentile(ring_g, 96)) < 18.0 or float(np.max(ring_g)) < 28.0:
+        if (
+            float(np.mean(core_s)) < 35.0
+            or float(np.percentile(core_s, 75)) < 50.0
+            or float(np.percentile(ring_g, 96)) < 18.0
+            or float(np.max(ring_g)) < 28.0
+        ):
             continue
         verified_nodes.append({
             "cx": nx,
             "cy": ny,
+            "radius": 14 if px_cnt < 400 else 22,
             "lit_pixels": px_cnt,
             "has_halo": False,
             "has_left_glow_line": False,
+            "has_right_glow_line": False,
+            "frontier_tier": 2,
+            "unlockable_score": 0.0,
             "core_white_ratio": round(c_white_ratio, 4),
             "node_kind": "accent_lit",
+            "node_size_class": "small_square" if px_cnt < 400 else "large_tablet",
         })
 
-    # Deduplicate nearby centroids (within 52px), keeping strongest halo node
+    # Deduplicate nearby centroids using adaptive radius-aware separation
     verified_nodes.sort(
         key=lambda n: (
+            int(n.get("frontier_tier", 2)),
             0 if n.get("has_halo") else 1,
+            -float(n.get("unlockable_score", 0.0)),
             -float(n.get("halo_score", 0.0)),
             -int(n.get("lit_pixels", 0)),
         )
     )
     deduped: List[Dict[str, Any]] = []
     for cand in verified_nodes:
-        if any(abs(cand["cx"] - n["cx"]) < 52 and abs(cand["cy"] - n["cy"]) < 52 for n in deduped):
+        cand_r = int(cand.get("radius", 24))
+        if any(
+            abs(cand["cx"] - n["cx"]) < max(26, min(48, int(round((cand_r + int(n.get("radius", 24))) * 0.9))))
+            and abs(cand["cy"] - n["cy"]) < max(26, min(48, int(round((cand_r + int(n.get("radius", 24))) * 0.9))))
+            for n in deduped
+        ):
             continue
         deduped.append(cand)
 
     # Final priority order:
-    #   1) Glowing-halo grey stone frontier nodes first
-    #   2) Left-white-line-connected frontier nodes before unconnected/isolated ones
-    #   3) Strictly left-to-right (X ascending), then top-to-bottom (Y ascending)
+    #   1) Frontier tier (0: clean low-sat grey core + glowing outer halo + no outgoing right white wire)
+    #   2) Glowing-halo grey stone frontier nodes first
+    #   3) Left-white-line-connected frontier nodes before unconnected/isolated ones
+    #   4) Higher unlockable score for non-Tier-0 fallback candidates
+    #   5) Strictly left-to-right (X ascending), then top-to-bottom (Y ascending)
     deduped.sort(
         key=lambda n: (
+            int(n.get("frontier_tier", 2)),
             0 if n.get("has_halo") else 1,
             0 if n.get("has_left_glow_line") else 1,
+            0.0 if int(n.get("frontier_tier", 2)) == 0 else -round(float(n.get("unlockable_score", 0.0)), 1),
             int(n["cx"]),
             int(n["cy"]),
         )
@@ -4350,7 +4589,7 @@ def auto_upgrade_roguelike_tech_tree(
     maa_dir: Path,
     theme: str = "BlackFlow",
     priority_order: Optional[Sequence[str]] = None,
-    max_upgrades: int = 12,
+    max_upgrades: int = 50,
     cancel_event: Optional[threading.Event] = None,
     log_callback: Optional[Callable[[str], None]] = None,
     lobby_confirmed_theme: Optional[str] = None,
@@ -4531,21 +4770,38 @@ def auto_upgrade_roguelike_tech_tree(
             prefetched_tree_boxes = list(v_res["boxes"])
 
     aborted_on_theme_select = False
+    exit_reason = "completed"
+    last_known_points: Optional[int] = None
+    canvas_swipes = 0
     try:
         skipped_coords: List[Tuple[int, int]] = []
         permanent_bad_coords: List[Tuple[int, int]] = []
-        canvas_swipes = 0
-        max_canvas_swipes = 3
+        max_canvas_swipes = 16
+        consecutive_unmoved_swipes = 0
         arch_nudge_swipes = 0
-        max_arch_nudge_swipes = 2
+        max_arch_nudge_swipes = 4
         wrong_page_recoveries = 0
+        no_progress_rounds = 0
+        max_no_progress_rounds = 20
+        consecutive_verify_failures = 0
+        ever_saw_insufficient_points = False
         prev_tree_img_for_swipe: Optional[Image.Image] = None
+        max_total_rounds = max(max_upgrades * 3 + 30, 80)
 
-        for _round in range(max_upgrades + 8):
+        for _round in range(max_total_rounds):
             if result["upgraded_count"] >= max_upgrades:
+                exit_reason = "max_upgrades_reached"
+                break
+            if no_progress_rounds >= max_no_progress_rounds:
+                exit_reason = "no_progress_limit"
+                _emit(
+                    log_callback,
+                    f"[RL-TECH] 科技树「{tech_spec['name']}」连续 {no_progress_rounds} 轮无扣点进展，触发安全上限退出。",
+                )
                 break
             if cancel_event and cancel_event.is_set():
                 result["cancelled"] = True
+                exit_reason = "cancelled"
                 break
 
             if prefetched_tree_img is not None:
@@ -4554,13 +4810,14 @@ def auto_upgrade_roguelike_tech_tree(
             else:
                 tree_img = stage_pilot.adb_screencap_image(adb_path, adb_addr)
             if tree_img is None:
+                exit_reason = "screencap_failed"
                 break
 
             rendered_ui = _has_rendered_ui_chrome(tree_img)
             tree_boxes: List[Dict[str, Any]] = []
             round_points_before: Optional[int] = None
 
-            # Per-round Page Guard + Default-Selected '确认升级' Priority Check (always active on real UI screenshots)
+            # Per-round Page Guard (with dual-frame recheck on unknown_not_tech_tree) + Default-Selected '确认升级' Check
             if rendered_ui:
                 if prefetched_tree_boxes is not None:
                     tree_boxes = prefetched_tree_boxes
@@ -4568,68 +4825,128 @@ def auto_upgrade_roguelike_tech_tree(
                 else:
                     tree_boxes = stage_pilot.find_text_boxes_via_ocr(tree_img, include_inverted=True)
 
-                guard = classify_tech_tree_page_guard(
-                    tree_img, tree_boxes, maa_dir=maa_dir, active_profile=active_profile, cancel_event=cancel_event
-                )
-                g_status = guard["status"]
-                round_points_before = guard.get("points")
-
-                if g_status == "theme_select_page":
-                    result["page_guard_interceptions"] = int(result.get("page_guard_interceptions", 0)) + 1
-                    aborted_on_theme_select = True
-                    _emit(
-                        log_callback,
-                        "[WARN][RL-TECH] Page Guard 拦截：当前处于集成战略「主题选择页」，严禁节点点击、左滑或继续点返回，安全中止加点。",
+                guard_action = "proceed"
+                for guard_try in (1, 2):
+                    guard = classify_tech_tree_page_guard(
+                        tree_img, tree_boxes, maa_dir=maa_dir, active_profile=active_profile, cancel_event=cancel_event
                     )
-                    break
+                    g_status = guard["status"]
+                    round_points_before = guard.get("points")
+                    if round_points_before is not None:
+                        last_known_points = round_points_before
 
-                if g_status == "wrong_page":
-                    wrong_kw = str(guard.get("wrong_keyword") or "非科技树页面")
-                    result["page_guard_interceptions"] = int(result.get("page_guard_interceptions", 0)) + 1
-                    _emit(
-                        log_callback,
-                        f"[WARN][RL-TECH] Page Guard 拦截：当前误入「{wrong_kw}」，立即点击左上角返回键 (<) 退出（严禁执行节点点击或左滑）。",
-                    )
-                    stage_pilot.adb_tap_norm(adb_path, adb_addr, 64, 40, tree_img.width, tree_img.height)
-                    time.sleep(0.8)
-                    wrong_page_recoveries += 1
-                    prev_tree_img_for_swipe = None
-                    if wrong_page_recoveries >= 3:
-                        _emit(log_callback, "[WARN][RL-TECH] 连续误入非科技树页面，安全中止科技树加点。")
+                    if g_status == "theme_select_page":
+                        result["page_guard_interceptions"] = int(result.get("page_guard_interceptions", 0)) + 1
+                        aborted_on_theme_select = True
+                        exit_reason = "theme_select_page"
+                        _emit(
+                            log_callback,
+                            "[WARN][RL-TECH] Page Guard 拦截：当前处于集成战略「主题选择页」，严禁节点点击、左滑或继续点返回，安全中止加点。",
+                        )
+                        guard_action = "break"
                         break
-                    continue
 
-                if g_status == "lobby":
-                    _emit(log_callback, "[WARN][RL-TECH] Page Guard 检测到已退回肉鸽主题大厅，安全中止科技树加点（严禁在大厅点击或左滑）。")
-                    break
+                    if g_status == "wrong_page":
+                        wrong_kw = str(guard.get("wrong_keyword") or "非科技树页面")
+                        result["page_guard_interceptions"] = int(result.get("page_guard_interceptions", 0)) + 1
+                        _emit(
+                            log_callback,
+                            f"[WARN][RL-TECH] Page Guard 拦截：当前误入「{wrong_kw}」，立即点击左上角返回键 (<) 退出（严禁执行节点点击或左滑）。",
+                        )
+                        stage_pilot.adb_tap_norm(adb_path, adb_addr, 64, 40, tree_img.width, tree_img.height)
+                        time.sleep(0.8)
+                        wrong_page_recoveries += 1
+                        no_progress_rounds += 1
+                        prev_tree_img_for_swipe = None
+                        if wrong_page_recoveries >= 3:
+                            exit_reason = "wrong_page_limit"
+                            _emit(log_callback, "[WARN][RL-TECH] 连续误入非科技树页面，安全中止科技树加点。")
+                            guard_action = "break"
+                        else:
+                            guard_action = "continue"
+                        break
 
-                if g_status == "overview_overlay":
-                    _emit(log_callback, "[WARN][RL-TECH] Page Guard 检测到处于属性总览弹窗（无顶部房子图标），点击左上角返回键 (<) 返回科技树画布。")
-                    stage_pilot.adb_tap_norm(adb_path, adb_addr, 64, 40, tree_img.width, tree_img.height)
-                    time.sleep(0.75)
-                    wrong_page_recoveries += 1
-                    prev_tree_img_for_swipe = None
-                    if arch_nudge_swipes < max_arch_nudge_swipes:
-                        arch_nudge_swipes += 1
-                        _emit(log_callback, "[RL-TECH] 退出属性总览弹窗后轻微向右拖动画布，将左侧前沿节点移至中部安全区...")
-                        stage_pilot.adb_swipe_norm(adb_path, adb_addr, 360, 360, 660, 360, 380, tree_img.width, tree_img.height)
+                    if g_status == "lobby":
+                        exit_reason = "returned_to_lobby"
+                        _emit(log_callback, "[WARN][RL-TECH] Page Guard 检测到已退回肉鸽主题大厅，安全中止科技树加点（严禁在大厅点击或左滑）。")
+                        guard_action = "break"
+                        break
+
+                    if g_status == "overview_overlay":
+                        _emit(log_callback, "[WARN][RL-TECH] Page Guard 检测到处于属性总览弹窗（无顶部房子图标），点击左上角返回键 (<) 返回科技树画布。")
+                        stage_pilot.adb_tap_norm(adb_path, adb_addr, 64, 40, tree_img.width, tree_img.height)
                         time.sleep(0.75)
-                        skipped_coords.clear()
-                        permanent_bad_coords.clear()
-                    if wrong_page_recoveries >= 3:
+                        wrong_page_recoveries += 1
+                        no_progress_rounds += 1
+                        prev_tree_img_for_swipe = None
+                        if arch_nudge_swipes < max_arch_nudge_swipes:
+                            arch_nudge_swipes += 1
+                            _emit(log_callback, "[RL-TECH] 退出属性总览弹窗后轻微向右拖动画布，将左侧前沿节点移至中部安全区...")
+                            stage_pilot.adb_swipe_norm(adb_path, adb_addr, 360, 360, 660, 360, 380, tree_img.width, tree_img.height)
+                            time.sleep(0.85)
+                            skipped_coords.clear()
+                            permanent_bad_coords.clear()
+                        if wrong_page_recoveries >= 3:
+                            exit_reason = "wrong_page_limit"
+                            guard_action = "break"
+                        else:
+                            guard_action = "continue"
                         break
+
+                    if g_status == "unknown_not_tech_tree":
+                        diag = (
+                            f"<={guard.get('has_return_icon')}, 房子={guard.get('has_home_icon')}, "
+                            f"进度徽章={guard.get('has_progress_badge')}, 点数区={guard.get('has_points_indicator')}"
+                        )
+                        if guard_try == 1:
+                            _emit(
+                                log_callback,
+                                f"[WARN][RL-TECH] Page Guard 首帧校验存疑（{diag}），等待 0.6s 复核第二帧...",
+                            )
+                            if cancel_event and cancel_event.is_set():
+                                result["cancelled"] = True
+                                exit_reason = "cancelled"
+                                guard_action = "break"
+                                break
+                            time.sleep(0.6)
+                            if cancel_event and cancel_event.is_set():
+                                result["cancelled"] = True
+                                exit_reason = "cancelled"
+                                guard_action = "break"
+                                break
+                            recheck_img = stage_pilot.adb_screencap_image(adb_path, adb_addr)
+                            if recheck_img is not None:
+                                tree_img = recheck_img
+                                tree_boxes = stage_pilot.find_text_boxes_via_ocr(tree_img, include_inverted=True)
+                                continue
+                        exit_reason = "unknown_not_tech_tree"
+                        _emit(
+                            log_callback,
+                            f"[WARN][RL-TECH] Page Guard 连续两帧未确认处于科技树画布（{diag}），安全中止加点。",
+                        )
+                        guard_action = "break"
+                        break
+
+                    break
+
+                if guard_action == "break":
+                    break
+                if guard_action == "continue":
                     continue
 
-                if g_status == "unknown_not_tech_tree":
-                    _emit(log_callback, "[WARN][RL-TECH] Page Guard 未确认处于科技树画布（缺失顶部 < / 房子图标 / 右上角点数特征），安全中止加点。")
-                    break
+                effective_points = round_points_before if round_points_before is not None else last_known_points
 
                 if round_points_before is not None and round_points_before <= 0:
+                    exit_reason = "points_exhausted"
                     _emit(log_callback, f"[RL-TECH] 科技树「{tech_spec['name']}」右上角剩余点数为 0，结束加点。")
                     break
 
                 # Step 1: Prioritize directly clicking the default-selected frontier node's cyan '确认升级' button!
-                default_confirm = evaluate_tech_tree_confirm_button(tree_img, tree_boxes, cancel_event=cancel_event)
+                default_confirm = evaluate_tech_tree_confirm_button(
+                    tree_img, tree_boxes, cancel_event=cancel_event, remaining_points=effective_points
+                )
+                if default_confirm.get("insufficient_points"):
+                    ever_saw_insufficient_points = True
                 if default_confirm["valid"]:
                     up_btn = default_confirm["button"]
                     ver = _execute_and_verify_tech_upgrade(
@@ -4643,8 +4960,10 @@ def auto_upgrade_roguelike_tech_tree(
                     )
                     if ver.get("cancelled"):
                         result["cancelled"] = True
+                        exit_reason = "cancelled"
                         break
                     if not ver.get("verified"):
+                        exit_reason = "upgrade_verify_failed"
                         _emit(
                             log_callback,
                             f"[WARN][RL-TECH] 点击默认选中「{up_btn['text']}」({ver['tap_xy'][0]},{ver['tap_xy'][1]}) 后未检测到扣点或节点推进（{ver.get('reason')}），判定未生效并安全退出。",
@@ -4652,8 +4971,13 @@ def auto_upgrade_roguelike_tech_tree(
                         break
                     desc_text = str(default_confirm.get("detail_text") or " ".join(b.get("text", "") for b in tree_boxes))
                     score, tier = score_tech_tree_node(desc_text, "", priority_order=eff_priority)
+                    no_progress_rounds = 0
+                    consecutive_unmoved_swipes = 0
+                    ever_saw_insufficient_points = False
+                    consecutive_verify_failures = 0
                     skipped_coords.clear()
                     prev_tree_img_for_swipe = None
+                    last_known_points = ver.get("points_after")
                     prefetched_tree_img = ver.get("after_img")
                     prefetched_tree_boxes = ver.get("after_boxes")
                     result["upgraded_count"] += 1
@@ -4685,43 +5009,60 @@ def auto_upgrade_roguelike_tech_tree(
                     a2 = np.asarray(tree_img.convert("RGB").resize((320, 180)), dtype=np.float32)
                     moved = float(np.mean(np.abs(a1 - a2))) > 3.0
                 prev_tree_img_for_swipe = None
-                if not moved:
-                    _emit(log_callback, f"[RL-TECH] 科技树「{tech_spec['name']}」画布已到达最右侧边缘，结束加点。")
-                    break
-                skipped_coords.clear()
+                required_unmoved_swipes = 2 if rendered_ui else 1
+                if moved:
+                    consecutive_unmoved_swipes = 0
+                    skipped_coords.clear()
+                    permanent_bad_coords.clear()
+                else:
+                    consecutive_unmoved_swipes += 1
+                    if consecutive_unmoved_swipes >= required_unmoved_swipes:
+                        exit_reason = "insufficient_points_all_frontiers" if ever_saw_insufficient_points else "reached_right_edge"
+                        if required_unmoved_swipes >= 2:
+                            _emit(
+                                log_callback,
+                                f"[RL-TECH] 科技树「{tech_spec['name']}」连续两次左滑画面无变化，已到达最右侧边缘（{exit_reason}），结束加点。",
+                            )
+                        else:
+                            _emit(log_callback, f"[RL-TECH] 科技树「{tech_spec['name']}」画布已到达最右侧边缘，结束加点。")
+                        break
 
             # Directly scan current screen's glowing frontier nodes first (never blindly page left!)
             raw_lit_nodes = detect_upgradeable_tech_nodes(tree_img)
-            # Filter out forbidden UI zones (arrows x<0.08/x>0.93, arch x<0.18 & y>0.62, top/bottom bars) & bad coords
+            # Filter out forbidden UI zones (arrows x<0.08/x>0.93, tightened arch x<0.175 & y>0.63, top/bottom bars) & bad coords
             lit_nodes: List[Dict[str, Any]] = []
             for n in raw_lit_nodes:
                 ncx, ncy = int(n["cx"]), int(n["cy"])
                 if is_point_in_tech_tree_forbidden_zone(ncx, ncy):
                     continue
-                if any(abs(ncx - bx) <= 42 and abs(ncy - by) <= 42 for bx, by in permanent_bad_coords):
+                if any(abs(ncx - bx) <= 28 and abs(ncy - by) <= 28 for bx, by in permanent_bad_coords):
                     continue
-                if any(abs(ncx - sx) <= 42 and abs(ncy - sy) <= 42 for sx, sy in skipped_coords):
+                if any(abs(ncx - sx) <= 28 and abs(ncy - sy) <= 28 for sx, sy in skipped_coords):
                     continue
                 lit_nodes.append(n)
 
             if not lit_nodes:
+                has_canvas_content = _has_rendered_tech_tree_canvas(tree_img) or _has_solid_white_upgraded_nodes(tree_img)
                 if not raw_lit_nodes:
-                    # On an all-upgraded left page (solid white icons filtered out -> raw_lit_nodes empty),
+                    # On rendered screens with visible tech-tree content (e.g. all-upgraded page),
                     # swipe left to explore right toward frontier instead of prematurely giving up!
-                    if rendered_ui and canvas_swipes < max_canvas_swipes and _has_solid_white_upgraded_nodes(tree_img):
+                    if rendered_ui and canvas_swipes < max_canvas_swipes and has_canvas_content:
                         canvas_swipes += 1
+                        no_progress_rounds += 1
                         prev_tree_img_for_swipe = tree_img
                         _emit(
                             log_callback,
-                            f"[RL-TECH] 当前屏仅见实心白「已升级」节点、无外发光可解锁石碑，直接向左滑动探索右侧前沿 ({canvas_swipes}/{max_canvas_swipes})...",
+                            f"[RL-TECH] 当前屏未检出可解锁发光前沿节点，向左滑动探索右侧区域 ({canvas_swipes}/{max_canvas_swipes})...",
                         )
                         stage_pilot.adb_swipe_norm(adb_path, adb_addr, 960, 360, 320, 360, 420, tree_img.width, tree_img.height)
                         time.sleep(0.9)
                         continue
+                    exit_reason = "insufficient_points_all_frontiers" if ever_saw_insufficient_points else "no_more_upgradeable_nodes"
                     _emit(log_callback, f"[RL-TECH] 科技树「{tech_spec['name']}」未检测到更多亮起的可升级节点，结束加点。")
                     break
                 if canvas_swipes < max_canvas_swipes:
                     canvas_swipes += 1
+                    no_progress_rounds += 1
                     prev_tree_img_for_swipe = tree_img
                     _emit(
                         log_callback,
@@ -4730,6 +5071,7 @@ def auto_upgrade_roguelike_tech_tree(
                     stage_pilot.adb_swipe_norm(adb_path, adb_addr, 960, 360, 320, 360, 420, tree_img.width, tree_img.height)
                     time.sleep(0.9)
                     continue
+                exit_reason = "insufficient_points_all_frontiers" if ever_saw_insufficient_points else "max_swipes_reached"
                 _emit(log_callback, f"[RL-TECH] 科技树「{tech_spec['name']}」当前暂无更多可解锁节点，结束加点。")
                 break
 
@@ -4740,34 +5082,55 @@ def auto_upgrade_roguelike_tech_tree(
                 and is_point_near_tech_tree_arch_edge(int(lit_nodes[0]["cx"]), int(lit_nodes[0]["cy"]))
             ):
                 arch_nudge_swipes += 1
+                no_progress_rounds += 1
+                prev_tree_img_for_swipe = None
                 _emit(
                     log_callback,
                     f"[RL-TECH] 候选前沿节点 ({lit_nodes[0]['cx']},{lit_nodes[0]['cy']}) 紧邻左下角拱门禁区边缘，"
                     f"先轻微向右拖动画布移至中部安全区再重扫 ({arch_nudge_swipes}/{max_arch_nudge_swipes})...",
                 )
                 stage_pilot.adb_swipe_norm(adb_path, adb_addr, 360, 360, 660, 360, 380, tree_img.width, tree_img.height)
-                time.sleep(0.75)
+                time.sleep(0.85)
                 skipped_coords.clear()
                 permanent_bad_coords.clear()
                 continue
 
-            # Inspect candidate nodes (left-to-right X ascending) using bottom-right button ROI for smart feedback & early stop
+            # Inspect candidate nodes across the entire safe viewport (left-to-right up to x≈0.93)
+            # Never early-stop mid-screen on '已升级' or '点数不足' so right-side / cheaper nodes are never missed!
+            effective_points = round_points_before if round_points_before is not None else last_known_points
             evaluated: List[Dict[str, Any]] = []
             saw_insufficient_points = False
+            saw_locked_on_screen = False
+            upgraded_hits_on_screen = 0
             last_tapped_xy: Optional[Tuple[int, int]] = None
             consecutive_upgraded = 0
             upgraded_immediately = False
-            triggered_early_swipe = False
             triggered_arch_rescan = False
             aborted_loop = False
 
-            remaining_nodes = list(lit_nodes[:10])
+            remaining_nodes = list(lit_nodes[:36])
             while remaining_nodes:
                 if cancel_event and cancel_event.is_set():
                     result["cancelled"] = True
+                    exit_reason = "cancelled"
                     break
                 node = remaining_nodes.pop(0)
                 ncx, ncy = int(node["cx"]), int(node["cy"])
+                if arch_nudge_swipes < max_arch_nudge_swipes and is_point_near_tech_tree_arch_edge(ncx, ncy):
+                    arch_nudge_swipes += 1
+                    no_progress_rounds += 1
+                    prev_tree_img_for_swipe = None
+                    _emit(
+                        log_callback,
+                        f"[RL-TECH] 候选前沿节点 ({ncx},{ncy}) 紧邻左下角拱门禁区边缘，"
+                        f"先轻微向右拖动画布移至中部安全区再重扫 ({arch_nudge_swipes}/{max_arch_nudge_swipes})...",
+                    )
+                    stage_pilot.adb_swipe_norm(adb_path, adb_addr, 360, 360, 660, 360, 380, tree_img.width, tree_img.height)
+                    time.sleep(0.85)
+                    skipped_coords.clear()
+                    permanent_bad_coords.clear()
+                    triggered_arch_rescan = True
+                    break
                 stage_pilot.adb_tap_norm(adb_path, adb_addr, ncx, ncy, tree_img.width, tree_img.height)
                 last_tapped_xy = (ncx, ncy)
                 time.sleep(0.55)
@@ -4781,6 +5144,7 @@ def auto_upgrade_roguelike_tech_tree(
                     result["page_guard_interceptions"] = int(result.get("page_guard_interceptions", 0)) + 1
                     aborted_on_theme_select = True
                     aborted_loop = True
+                    exit_reason = "theme_select_page"
                     _emit(log_callback, "[WARN][RL-TECH] 点击节点后检测到处于「主题选择页」，立即中止科技树扫描。")
                     break
 
@@ -4799,7 +5163,9 @@ def auto_upgrade_roguelike_tech_tree(
                     last_tapped_xy = None
                     continue
 
-                confirm_eval = evaluate_tech_tree_confirm_button(detail_img, detail_boxes, cancel_event=cancel_event)
+                confirm_eval = evaluate_tech_tree_confirm_button(
+                    detail_img, detail_boxes, cancel_event=cancel_event, remaining_points=effective_points
+                )
 
                 # Self-heal ONLY if top-bar house icon is ABSENT AND >=2 full-screen attribute summary groups appear
                 if _is_tech_tree_overview_overlay(
@@ -4821,6 +5187,8 @@ def auto_upgrade_roguelike_tech_tree(
                     )
                     if (rendered_ui or near_arch) and arch_nudge_swipes < max_arch_nudge_swipes:
                         arch_nudge_swipes += 1
+                        no_progress_rounds += 1
+                        prev_tree_img_for_swipe = None
                         _emit(
                             log_callback,
                             f"[RL-TECH] 退出属性总览弹窗后不再死磕原坐标，先轻微向右拖动画布移至中部安全区再重扫 ({arch_nudge_swipes}/{max_arch_nudge_swipes})...",
@@ -4828,7 +5196,7 @@ def auto_upgrade_roguelike_tech_tree(
                         stage_pilot.adb_swipe_norm(
                             adb_path, adb_addr, 360, 360, 660, 360, 380, detail_img.width, detail_img.height
                         )
-                        time.sleep(0.75)
+                        time.sleep(0.85)
                         skipped_coords.clear()
                         permanent_bad_coords.clear()
                         triggered_arch_rescan = True
@@ -4838,38 +5206,33 @@ def auto_upgrade_roguelike_tech_tree(
                 btn_status = str(confirm_eval.get("button_status") or "")
                 if not confirm_eval["valid"]:
                     if btn_status == "already_upgraded":
+                        upgraded_hits_on_screen += 1
                         consecutive_upgraded += 1
                         skipped_coords.append((ncx, ncy))
-                        if consecutive_upgraded >= 2:
-                            _emit(
-                                log_callback,
-                                f"[RL-TECH] 连续命中 {consecutive_upgraded} 个「已升级」节点，说明当前处于已点满的左侧区域，"
-                                f"立刻中止本屏遍历并向左滑动探索前沿...",
-                            )
-                            if canvas_swipes < max_canvas_swipes:
-                                canvas_swipes += 1
-                                prev_tree_img_for_swipe = tree_img
-                                stage_pilot.adb_swipe_norm(
-                                    adb_path, adb_addr, 960, 360, 320, 360, 420, tree_img.width, tree_img.height
-                                )
-                                time.sleep(0.9)
-                                skipped_coords.clear()
-                                triggered_early_swipe = True
-                                result["early_stop_already_upgraded_swipes"] = (
-                                    int(result.get("early_stop_already_upgraded_swipes", 0)) + 1
-                                )
-                            break
+                        _emit(
+                            log_callback,
+                            f"[RL-TECH] 节点 ({ncx},{ncy}) 显示「已升级」，跳过并继续探测同屏剩余候选节点（剩余 {len(remaining_nodes)} 个）。",
+                        )
                         continue
 
                     consecutive_upgraded = 0
                     if confirm_eval.get("insufficient_points"):
                         saw_insufficient_points = True
+                        ever_saw_insufficient_points = True
+                        _emit(
+                            log_callback,
+                            f"[RL-TECH] 节点 ({ncx},{ncy}) 点数不足（需求={confirm_eval.get('required_cost') or '未知'}，"
+                            f"剩余={effective_points if effective_points is not None else '未知'}），跳过并继续尝试同屏其余更低费用节点...",
+                        )
+                    elif btn_status == "locked":
+                        saw_locked_on_screen = True
                     skipped_coords.append((ncx, ncy))
                     # When hitting '未解锁', prioritize any remaining untried candidate strictly to the LEFT of ncx
                     if btn_status == "locked" and remaining_nodes:
                         remaining_nodes.sort(
                             key=lambda n: (
                                 0 if int(n["cx"]) < ncx else 1,
+                                int(n.get("frontier_tier", 2)),
                                 0 if n.get("has_halo") else 1,
                                 int(n["cx"]),
                                 int(n["cy"]),
@@ -4902,19 +5265,34 @@ def auto_upgrade_roguelike_tech_tree(
                     )
                     if ver.get("cancelled"):
                         result["cancelled"] = True
+                        exit_reason = "cancelled"
                         aborted_loop = True
                         break
                     if not ver.get("verified"):
+                        consecutive_verify_failures += 1
+                        permanent_bad_coords.append((ncx, ncy))
+                        if consecutive_verify_failures >= 2 or not remaining_nodes:
+                            exit_reason = "upgrade_verify_failed"
+                            _emit(
+                                log_callback,
+                                f"[WARN][RL-TECH] 点击「{up_btn['text']}」({ver['tap_xy'][0]},{ver['tap_xy'][1]}) 后未检测到扣点或节点推进（{ver.get('reason')}），判定加点未生效并退出循环。",
+                            )
+                            aborted_loop = True
+                            break
                         _emit(
                             log_callback,
-                            f"[WARN][RL-TECH] 点击「{up_btn['text']}」({ver['tap_xy'][0]},{ver['tap_xy'][1]}) 后未检测到扣点或节点推进（{ver.get('reason')}），判定加点未生效并退出循环。",
+                            f"[WARN][RL-TECH] 点击节点 ({ncx},{ncy})「{up_btn['text']}」未检测到扣点推进，跳过并继续探测其余前沿节点。",
                         )
-                        aborted_loop = True
-                        break
+                        continue
                     prefetched_tree_img = ver.get("after_img")
                     prefetched_tree_boxes = ver.get("after_boxes")
+                    no_progress_rounds = 0
+                    consecutive_unmoved_swipes = 0
+                    ever_saw_insufficient_points = False
+                    consecutive_verify_failures = 0
                     skipped_coords.clear()
                     prev_tree_img_for_swipe = None
+                    last_known_points = ver.get("points_after")
                     result["upgraded_count"] += 1
                     result["upgraded_nodes"].append({
                         "cx": ncx,
@@ -4949,26 +5327,35 @@ def auto_upgrade_roguelike_tech_tree(
 
             if result["cancelled"] or aborted_loop:
                 break
-            if upgraded_immediately or triggered_early_swipe or triggered_arch_rescan:
+            if upgraded_immediately or triggered_arch_rescan:
                 continue
 
             if not evaluated:
-                if saw_insufficient_points:
+                no_progress_rounds += 1
+                has_canvas_content = _has_rendered_tech_tree_canvas(tree_img)
+                saw_non_upgraded_frontier = saw_insufficient_points or saw_locked_on_screen
+                if saw_insufficient_points and not (rendered_ui and has_canvas_content):
+                    exit_reason = "insufficient_points"
                     _emit(log_callback, f"[RL-TECH] 科技树「{tech_spec['name']}」当前点数不足，结束加点。")
                     break
-                if consecutive_upgraded >= 2:
-                    _emit(log_callback, f"[RL-TECH] 科技树「{tech_spec['name']}」已达最大左滑探测次数且连续命中已升级节点，结束加点。")
+                if (not saw_non_upgraded_frontier) and upgraded_hits_on_screen > 0 and (
+                    canvas_swipes >= max_canvas_swipes
+                    or consecutive_unmoved_swipes >= (2 if rendered_ui else 1)
+                ):
+                    exit_reason = "already_upgraded_exhausted"
+                    _emit(log_callback, f"[RL-TECH] 科技树「{tech_spec['name']}」已达最大左滑探测次数且整屏均为已升级节点，结束加点。")
                     break
                 if canvas_swipes < max_canvas_swipes:
                     canvas_swipes += 1
                     prev_tree_img_for_swipe = tree_img
                     _emit(
                         log_callback,
-                        f"[RL-TECH] 当前屏未命中可确认升级的前沿节点，向左滑动一次画布探测右侧新节点 ({canvas_swipes}/{max_canvas_swipes})...",
+                        f"[RL-TECH] 整屏候选节点遍历完毕且未命中可升级节点，向左滑动一次画布探测右侧新节点 ({canvas_swipes}/{max_canvas_swipes})...",
                     )
                     stage_pilot.adb_swipe_norm(adb_path, adb_addr, 960, 360, 320, 360, 420, tree_img.width, tree_img.height)
                     time.sleep(0.9)
                     continue
+                exit_reason = "insufficient_points_all_frontiers" if ever_saw_insufficient_points else "max_swipes_reached"
                 _emit(log_callback, f"[RL-TECH] 科技树「{tech_spec['name']}」当前暂无点数足够的可激活节点。")
                 break
 
@@ -4998,8 +5385,10 @@ def auto_upgrade_roguelike_tech_tree(
                 )
                 if ver.get("cancelled"):
                     result["cancelled"] = True
+                    exit_reason = "cancelled"
                     break
                 if not ver.get("verified"):
+                    exit_reason = "upgrade_verify_failed"
                     _emit(
                         log_callback,
                         f"[WARN][RL-TECH] 点击「{best['upgrade_label']}」({ver['tap_xy'][0]},{ver['tap_xy'][1]}) 后未检测到扣点或节点推进（{ver.get('reason')}），判定加点未生效并退出循环。",
@@ -5007,7 +5396,14 @@ def auto_upgrade_roguelike_tech_tree(
                     break
                 prefetched_tree_img = ver.get("after_img")
                 prefetched_tree_boxes = ver.get("after_boxes")
+                no_progress_rounds = 0
+                consecutive_unmoved_swipes = 0
+                ever_saw_insufficient_points = False
+                consecutive_verify_failures = 0
                 skipped_coords.clear()
+                prev_tree_img_for_swipe = None
+                if ver.get("points_after") is not None:
+                    last_known_points = ver["points_after"]
                 result["upgraded_count"] += 1
                 result["upgraded_nodes"].append({
                     "cx": bxy[0],
@@ -5033,6 +5429,10 @@ def auto_upgrade_roguelike_tech_tree(
                 stage_pilot.adb_tap_norm(adb_path, adb_addr, 640, 620, tree_img.width, tree_img.height)
                 time.sleep(0.35)
 
+                no_progress_rounds = 0
+                consecutive_unmoved_swipes = 0
+                ever_saw_insufficient_points = False
+                consecutive_verify_failures = 0
                 skipped_coords.clear()
                 result["upgraded_count"] += 1
                 result["upgraded_nodes"].append({
@@ -5047,7 +5447,18 @@ def auto_upgrade_roguelike_tech_tree(
                     log_callback,
                     f"[RL-TECH] 已按优先级自动加点 [{best['tier']}|分={best['score']}|按钮={best['upgrade_label']}] ({bxy[0]},{bxy[1]}) -> {best['detail_text'][:48]}",
                 )
+        else:
+            exit_reason = "max_rounds_reached"
     finally:
+        result["exit_reason"] = exit_reason
+        result["remaining_points"] = last_known_points
+        result["canvas_swipes"] = canvas_swipes
+        _emit(
+            log_callback,
+            f"[RL-TECH] 科技树「{tech_spec['name']}」自动加点汇总：本次升级 {result['upgraded_count']} 项，"
+            f"剩余点数={last_known_points if last_known_points is not None else '未知'}，"
+            f"左滑探测={canvas_swipes} 次，退出原因={exit_reason}。",
+        )
         if not aborted_on_theme_select:
             _tap_return_to_lobby(
                 adb_path, adb_addr, maa_dir, active_theme, cancel_event=cancel_event, log_callback=log_callback

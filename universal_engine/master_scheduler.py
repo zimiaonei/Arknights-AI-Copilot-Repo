@@ -26,7 +26,15 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
-from . import ai_strategist, auto_growth, roguelike_ai_copilot, stage_pilot
+from . import ai_strategist, auto_growth, roguelike_ai_copilot, stage_pilot, toolbox_runner
+from .utils import runtime_guard
+from .toolbox_runner import (
+    DEFAULT_TOOLBOX_CONFIG,
+    build_toolbox_task_spec,
+    inspect_toolbox_catalog,
+    normalize_toolbox_config,
+    run_toolbox_task,
+)
 from .auto_growth import (
     _extract_active_event,
     decide_optimal_stages,
@@ -108,8 +116,17 @@ def load_state(base_dir: Optional[Path] = None) -> Dict[str, Any]:
     return {"annihilation": {}, "last_daily": {}, "last_battle_is_annihilation": False}
 
 
+def _guarded_write_text(path: Any, content: str, encoding: str = "utf-8") -> None:
+    """write_text that becomes a no-op while Dry-Run is active (never pollute reports/data/state)."""
+    if runtime_guard.is_dry_run_enabled():
+        return
+    Path(path).write_text(content, encoding=encoding)
+
+
 def save_state(state: Dict[str, Any], base_dir: Optional[Path] = None) -> Path:
     sp = _state_path(base_dir)
+    if runtime_guard.is_dry_run_enabled():
+        return sp
     sp.parent.mkdir(parents=True, exist_ok=True)
     sp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
     return sp
@@ -1128,9 +1145,14 @@ def _resolve_auto_push_stages(maa_dir: Path, base_dir: Path, server: str) -> Lis
 class MaaEngine:
     """GUI-ready universal backend engine encapsulating diagnostics, installation, AI, growth, and scheduling."""
 
-    def __init__(self, config_path: Optional[Path] = None, launch_source: str = "cli"):
+    def __init__(
+        self,
+        config_path: Optional[Union[Path, str]] = None,
+        launch_source: str = "cli",
+        base_dir: Optional[Union[Path, str]] = None,
+    ):
         self.config_path = Path(config_path) if config_path is not None else None
-        self.base_dir = get_base_dir()
+        self.base_dir = Path(base_dir) if base_dir is not None else get_base_dir()
         self.launch_source = str(launch_source or "cli").strip().lower()
 
     def _get_lock_maa_dir(self) -> Optional[Path]:
@@ -1903,7 +1925,7 @@ class MaaEngine:
             }
         else:
             report["post_action_result"] = execute_post_action(
-                str(cfg.get("post_action", "none")), cfg, maa_dir=maa_dir, dry_run=dry_run_post_action
+                str(cfg.get("post_action", "none")), cfg, maa_dir=maa_dir, dry_run=(dry_run_post_action or runtime_guard.is_dry_run_enabled())
             )
 
         reports_dir = self.base_dir / "reports"
@@ -1911,8 +1933,8 @@ class MaaEngine:
         (self.base_dir / "data").mkdir(parents=True, exist_ok=True)
         ts_name = datetime.now().strftime("%Y%m%d_%H%M%S")
         rel_report = f"reports/daily_{ts_name}.json"
-        (self.base_dir / rel_report).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-        (self.base_dir / "data" / "latest_daily_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        _guarded_write_text(self.base_dir / rel_report, json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        _guarded_write_text(self.base_dir / "data" / "latest_daily_report.json", json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
         state["last_daily"] = {"finished_at": report["finished_at"], "report_path": rel_report}
         save_state(state, base_dir=self.base_dir)
@@ -2029,7 +2051,7 @@ class MaaEngine:
             res["post_action_result"] = {"action": str(cfg.get("post_action", "none")), "executed": False, "skipped_reason": "cancelled"}
         else:
             res["post_action_result"] = execute_post_action(
-                str(cfg.get("post_action", "none")), cfg, maa_dir=maa_dir, dry_run=dry_run_post_action
+                str(cfg.get("post_action", "none")), cfg, maa_dir=maa_dir, dry_run=(dry_run_post_action or runtime_guard.is_dry_run_enabled())
             )
         return res
 
@@ -2149,7 +2171,7 @@ class MaaEngine:
             res["post_action_result"] = {"action": str(cfg.get("post_action", "none")), "executed": False, "skipped_reason": "cancelled"}
         else:
             res["post_action_result"] = execute_post_action(
-                str(cfg.get("post_action", "none")), cfg, maa_dir=maa_dir, dry_run=dry_run_post_action
+                str(cfg.get("post_action", "none")), cfg, maa_dir=maa_dir, dry_run=(dry_run_post_action or runtime_guard.is_dry_run_enabled())
             )
         return res
 
@@ -3129,14 +3151,14 @@ class MaaEngine:
             }
         else:
             report["post_action_result"] = execute_post_action(
-                str(cfg.get("post_action", "none")), cfg, maa_dir=maa_dir, dry_run=dry_run_post_action
+                str(cfg.get("post_action", "none")), cfg, maa_dir=maa_dir, dry_run=(dry_run_post_action or runtime_guard.is_dry_run_enabled())
             )
 
         (self.base_dir / "reports").mkdir(parents=True, exist_ok=True)
         (self.base_dir / "data").mkdir(parents=True, exist_ok=True)
         rel_report = f"reports/roguelike_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        (self.base_dir / rel_report).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-        (self.base_dir / "data" / "latest_roguelike_report.json").write_text(
+        _guarded_write_text(self.base_dir / rel_report, json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        _guarded_write_text(self.base_dir / "data" / "latest_roguelike_report.json", 
             json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         report["report_path"] = rel_report
@@ -3395,14 +3417,14 @@ class MaaEngine:
             }
         else:
             report["post_action_result"] = execute_post_action(
-                str(cfg.get("post_action", "none")), cfg, maa_dir=maa_dir, dry_run=dry_run_post_action
+                str(cfg.get("post_action", "none")), cfg, maa_dir=maa_dir, dry_run=(dry_run_post_action or runtime_guard.is_dry_run_enabled())
             )
 
         (self.base_dir / "reports").mkdir(parents=True, exist_ok=True)
         (self.base_dir / "data").mkdir(parents=True, exist_ok=True)
         rel_report = f"reports/reclamation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        (self.base_dir / rel_report).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-        (self.base_dir / "data" / "latest_reclamation_report.json").write_text(
+        _guarded_write_text(self.base_dir / rel_report, json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        _guarded_write_text(self.base_dir / "data" / "latest_reclamation_report.json", 
             json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         report["report_path"] = rel_report
@@ -3429,12 +3451,195 @@ class MaaEngine:
 
         return report
 
+    def run_toolbox_task(
+        self,
+        tool_id: str,
+        tool_params: Optional[Dict[str, Any]] = None,
+        timeout_sec: Optional[int] = None,
+        refresh_cache_flag: bool = False,
+        overrides: Optional[Dict[str, Any]] = None,
+        event_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        log_callback: Optional[Callable[[str], None]] = None,
+        progress_callback: Optional[Callable[[int, int, str], None]] = None,
+        cancel_event: Optional[threading.Event] = None,
+        dry_run_post_action: bool = False,
+    ) -> Dict[str, Any]:
+        return self._run_with_lock(
+            "toolbox",
+            lambda: self._run_toolbox_task_unlocked(
+                tool_id=tool_id,
+                tool_params=tool_params,
+                timeout_sec=timeout_sec,
+                refresh_cache_flag=refresh_cache_flag,
+                overrides=overrides,
+                event_callback=event_callback,
+                log_callback=log_callback,
+                progress_callback=progress_callback,
+                cancel_event=cancel_event,
+                dry_run_post_action=dry_run_post_action,
+            ),
+            task_name=f"toolbox:{tool_id}",
+            log_callback=log_callback,
+        )
+
+    def _run_toolbox_task_unlocked(
+        self,
+        tool_id: str,
+        tool_params: Optional[Dict[str, Any]] = None,
+        timeout_sec: Optional[int] = None,
+        refresh_cache_flag: bool = False,
+        overrides: Optional[Dict[str, Any]] = None,
+        event_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        log_callback: Optional[Callable[[str], None]] = None,
+        progress_callback: Optional[Callable[[int, int, str], None]] = None,
+        cancel_event: Optional[threading.Event] = None,
+        dry_run_post_action: bool = False,
+    ) -> Dict[str, Any]:
+        """Execute a lightweight toolbox task without calling StartUp, with lock, report, and webhook support."""
+        t0 = time.time()
+        cfg = self.get_config(overrides)
+        state = load_state(self.base_dir)
+        maa_dir = cfg.get("maa_dir") or cfg.get("maa_path") or resolve_maa_path(self.config_path)
+
+        spec = build_toolbox_task_spec(tool_id, maa_dir=maa_dir, config=cfg, overrides=tool_params)
+        if not spec.get("available"):
+            err_msg = str(spec.get("unavailable_reason") or "小工具不可用")
+            if log_callback:
+                try:
+                    log_callback(f"[TOOLBOX][前置拦截] 无法执行「{tool_id}」：{err_msg}")
+                except Exception:
+                    pass
+            return {
+                "ok": False,
+                "tool_id": tool_id,
+                "mode": "toolbox",
+                "error": err_msg,
+                "available": False,
+            }
+
+        if cancel_event and cancel_event.is_set():
+            return {
+                "ok": False,
+                "cancelled": True,
+                "tool_id": tool_id,
+                "mode": "toolbox",
+                "post_action_result": {
+                    "action": str(cfg.get("post_action", "none")),
+                    "executed": False,
+                    "skipped_reason": "cancelled",
+                },
+            }
+
+        if progress_callback:
+            progress_callback(1, 3, f"连接模拟器并就绪小工具 ({spec.get('name') or tool_id})")
+
+        # Connect session: strictly NO StartUp reset call!
+        maa_dir, sess, err = self._connect_session(
+            cfg,
+            refresh_cache_flag=refresh_cache_flag,
+            event_callback=event_callback,
+            log_callback=log_callback,
+            cancel_event=cancel_event,
+        )
+        if err == "__cancelled__" or (cancel_event and cancel_event.is_set()):
+            if sess is not None:
+                sess.close()
+            return {
+                "ok": False,
+                "cancelled": True,
+                "tool_id": tool_id,
+                "mode": "toolbox",
+                "post_action_result": {
+                    "action": str(cfg.get("post_action", "none")),
+                    "executed": False,
+                    "skipped_reason": "cancelled",
+                },
+            }
+        if sess is None or maa_dir is None:
+            return {"ok": False, "tool_id": tool_id, "mode": "toolbox", "error": err}
+
+        holder: Dict[str, Any] = {"session": sess}
+        report: Dict[str, Any] = {
+            "started_at": datetime.now().isoformat(timespec="seconds"),
+            "mode": "toolbox",
+            "tool_id": tool_id,
+            "tool_name": spec.get("name") or tool_id,
+            "server": cfg.get("server", "Official"),
+        }
+
+        try:
+            if progress_callback:
+                progress_callback(2, 3, f"执行小工具 ({spec.get('name') or tool_id})")
+
+            task_res = run_toolbox_task(
+                holder,
+                tool_id,
+                cfg,
+                maa_dir=maa_dir,
+                overrides=tool_params,
+                log_callback=log_callback,
+                cancel_event=cancel_event,
+            )
+            report.update(task_res)
+        finally:
+            if holder.get("session") is not None:
+                holder["session"].close()
+
+        was_cancelled = bool((cancel_event and cancel_event.is_set()) or report.get("cancelled"))
+        report["cancelled"] = was_cancelled
+        report["ok"] = bool(report.get("ok", False)) and not was_cancelled
+        report["total_elapsed_seconds"] = round(time.time() - t0, 1)
+        report["finished_at"] = datetime.now().isoformat(timespec="seconds")
+
+        if was_cancelled:
+            report["post_action_result"] = {
+                "action": str(cfg.get("post_action", "none")),
+                "executed": False,
+                "skipped_reason": "cancelled",
+            }
+        else:
+            report["post_action_result"] = execute_post_action(
+                str(cfg.get("post_action", "none")), cfg, maa_dir=maa_dir, dry_run=(dry_run_post_action or runtime_guard.is_dry_run_enabled())
+            )
+
+        if progress_callback:
+            progress_callback(3, 3, "生成小工具战报")
+
+        (self.base_dir / "reports").mkdir(parents=True, exist_ok=True)
+        (self.base_dir / "data").mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        rel_report = f"reports/toolbox_{tool_id}_{ts}.json"
+        _guarded_write_text(self.base_dir / rel_report, json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        _guarded_write_text(self.base_dir / "data" / "latest_toolbox_report.json", 
+            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        report["report_path"] = rel_report
+
+        state["last_toolbox"] = {
+            "finished_at": report["finished_at"],
+            "tool_id": tool_id,
+            "report_path": rel_report,
+        }
+        save_state(state, base_dir=self.base_dir)
+
+        notif = cfg.get("notifications", {}) if isinstance(cfg.get("notifications"), dict) else {}
+        if not was_cancelled and notif.get("webhook_enabled") and notif.get("notify_on_daily_finish", True):
+            tool_title = report.get("tool_name") or tool_id
+            msg = f"小工具: {tool_title} ({tool_id}) | 耗时: {report.get('total_elapsed_seconds')}s"
+            threading.Thread(
+                target=send_webhook_notification,
+                args=(cfg, "MAA 小工具战报", msg, "toolbox_finish", {"report_path": rel_report}),
+                daemon=True,
+            ).start()
+
+        return report
+
 
 def _build_cli_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="MAA 通用自主后端调度引擎")
     parser.add_argument(
         "--mode",
-        choices=["check", "install", "daily", "annihilation", "fight", "push", "roguelike", "reclamation"],
+        choices=["check", "install", "daily", "annihilation", "fight", "push", "roguelike", "reclamation", "toolbox"],
         default="daily",
     )
     parser.add_argument("--config", default="", help="自定义 launcher_config.json 路径")
@@ -3454,6 +3659,12 @@ def _build_cli_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-refresh-cache", action="store_true")
     parser.add_argument("--no-adb-check", action="store_true")
     parser.add_argument("--dry-run-post-action", action="store_true")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="演习模式：只看不点，拦截点击/滑动/任务下发/Webhook/关机，不落盘状态与战报",
+    )
+    parser.add_argument("--dry-run-max-actions", type=int, default=3, help="演习模式最大拦截动作数（默认 3）")
     # Long-term exploration overrides (Roguelike / Reclamation)
     parser.add_argument("--theme", default="", help="肉鸽/生息演算主题覆盖（如 BlackFlow / Sarkaz / RelaunchAnchor / Tales）")
     parser.add_argument("--rl-mode", default="", help="肉鸽模式覆盖（Exp/Investment/Collectible 或整数）")
@@ -3468,6 +3679,9 @@ def _build_cli_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ra-mode", default="", help="生息演算模式覆盖（RA1/RA4/RA15/ProsperityNoSave/ProsperityInSave）")
     parser.add_argument("--clear-store", action="store_true", help="生息演算完成后自动搬空商店")
     parser.add_argument("--timeout", type=int, default=None, help="长时任务超时秒数覆盖")
+    # Toolbox overrides
+    parser.add_argument("--tool", default="", help="小工具 ID（如 os_karlan / secret_front / stronghold_protocol / event_shop 等）")
+    parser.add_argument("--tool-params", default="", help="小工具参数 JSON 字符串")
     return parser
 
 
@@ -3475,6 +3689,23 @@ def main(argv: Optional[List[str]] = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
+    _pre_args = _build_cli_parser().parse_args(argv)
+    if getattr(_pre_args, "dry_run", False):
+        _cfg_path = Path(_pre_args.config) if _pre_args.config else None
+        _base = MaaEngine(config_path=_cfg_path, launch_source="cli").base_dir
+        print("[DRY-RUN] 演习模式已开启：只看不点，不写入调度状态/配置/战报", flush=True)
+        with runtime_guard.dry_run_scope(
+            enabled=True,
+            max_actions=int(_pre_args.dry_run_max_actions),
+            base_dir=_base,
+            log_callback=print,
+            process_wide=True,
+        ):
+            return _main_impl(argv)
+    return _main_impl(argv)
+
+
+def _main_impl(argv: Optional[List[str]] = None) -> int:
     args = _build_cli_parser().parse_args(argv)
     cfg_path = Path(args.config) if args.config else None
     engine = MaaEngine(config_path=cfg_path, launch_source="cli")
@@ -3512,7 +3743,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         overrides["daily"] = daily_over
 
     if args.mode == "check":
-        if overrides:
+        if overrides and not runtime_guard.is_dry_run_enabled():
             engine.save_config(overrides)
         if not args.no_refresh_cache:
             engine.refresh_cache()
@@ -3622,6 +3853,29 @@ def main(argv: Optional[List[str]] = None) -> int:
             timeout_sec=args.timeout,
             refresh_cache_flag=not args.no_refresh_cache,
             overrides=overrides or None,
+            dry_run_post_action=args.dry_run_post_action,
+        )
+        locked = _cli_emit_lock_if_needed(res)
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 3 if locked else (0 if res.get("ok") else 2)
+
+    if args.mode == "toolbox":
+        tool_id = str(args.tool or "").strip()
+        if not tool_id:
+            print("[ERR] --mode toolbox 需要通过 --tool 指定小工具 ID", file=sys.stderr)
+            return 2
+        tool_params = None
+        if args.tool_params:
+            try:
+                tool_params = json.loads(args.tool_params)
+            except Exception as exc:
+                print(f"[ERR] 解析 --tool-params 失败: {exc}", file=sys.stderr)
+                return 2
+
+        res = engine.run_toolbox_task(
+            tool_id=tool_id,
+            tool_params=tool_params,
+            refresh_cache_flag=not args.no_refresh_cache,
             dry_run_post_action=args.dry_run_post_action,
         )
         locked = _cli_emit_lock_if_needed(res)

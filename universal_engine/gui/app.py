@@ -583,6 +583,65 @@ def run_desktop_app(open_wizard_force: bool = False, smoke_test_output: Optional
             except Exception as exc:
                 raf_radius_sample = {"ok": False, "error": str(exc)}
 
+            # 4a. Dry-run UI check (non-destructive: always reverts toggle to OFF)
+            dry_run_ui_check: Any = None
+            try:
+                _dr_set_js = (
+                    "(function(v){var sw=document.getElementById('set-sw-dry-run');"
+                    "if(!sw) return false; sw.checked=v;"
+                    "sw.dispatchEvent(new Event('change',{bubbles:true})); return true;})(%s)"
+                )
+                _dr_pill_js = (
+                    "(function(){var p=document.getElementById('top-pill-dry-run');"
+                    "if(!p) return {exists:false,hidden:true,visible:false};"
+                    "return {exists:true,hidden:p.classList.contains('hidden'),"
+                    "visible:p.offsetParent!==null};})()"
+                )
+                _dr_overflow_js = (
+                    "(function(){var tb=document.querySelector('.top-bar');var de=document.documentElement;"
+                    "return {top_bar_ok: !tb || tb.scrollWidth <= tb.clientWidth + 2,"
+                    "doc_ok: de.scrollWidth <= de.clientWidth + 2};})()"
+                )
+                dr_errors: List[str] = []
+                dr_overflow: Dict[str, Any] = {}
+                dr_on_pill: Any = None
+                dr_off_pill: Any = None
+                try:
+                    if not window.evaluate_js(_dr_set_js % "true"):
+                        dr_errors.append("missing #set-sw-dry-run")
+                    time.sleep(0.15)
+                    dr_on_pill = window.evaluate_js(_dr_pill_js)
+                    if not (isinstance(dr_on_pill, dict) and dr_on_pill.get("exists")
+                            and not dr_on_pill.get("hidden") and dr_on_pill.get("visible")):
+                        dr_errors.append("pill not visible when dry-run ON")
+                    for _w, _h in ((960, 640), (920, 600)):
+                        window.resize(_w, _h)
+                        time.sleep(0.3)
+                        ov = window.evaluate_js(_dr_overflow_js)
+                        dr_overflow[f"{_w}x{_h}"] = ov
+                        if not (isinstance(ov, dict) and ov.get("top_bar_ok") and ov.get("doc_ok")):
+                            dr_errors.append(f"horizontal overflow at {_w}x{_h}")
+                finally:
+                    window.evaluate_js(_dr_set_js % "false")
+                    time.sleep(0.15)
+                    dr_off_pill = window.evaluate_js(_dr_pill_js)
+                    try:
+                        window.resize(1280, 760)
+                        time.sleep(0.2)
+                    except Exception:
+                        pass
+                if not (isinstance(dr_off_pill, dict) and dr_off_pill.get("hidden")):
+                    dr_errors.append("pill not hidden after dry-run OFF")
+                dry_run_ui_check = {
+                    "ok": not dr_errors,
+                    "errors": dr_errors,
+                    "pill_on": dr_on_pill,
+                    "pill_off": dr_off_pill,
+                    "overflow": dr_overflow,
+                }
+            except Exception as exc:
+                dry_run_ui_check = {"ok": False, "error": str(exc)}
+
             # 4b. Check all 5 Settings Tabs (DOM visibility, height > 100, controls >= 2, zero overflow)
             settings_tabs_check: Any = None
             try:
@@ -625,6 +684,142 @@ def run_desktop_app(open_wizard_force: bool = False, smoke_test_output: Optional
                     time.sleep(0.1)
             except Exception as exc:
                 theme_motion_check = {"ok": False, "error": str(exc)}
+
+            # 4d. Check Toolbox Page (Master-Detail, 5 representative tools, zero overflow, visible start button)
+            toolbox_page_check: Any = None
+            try:
+                window.resize(960, 640)
+                time.sleep(0.3)
+                window.evaluate_js(
+                    "var nav = document.querySelector('[data-page=\"page-toolbox\"]');"
+                    "if (nav) nav.click(); else if (window.switchPage) window.switchPage('page-toolbox');"
+                )
+                t_wait_tb = time.monotonic()
+                while time.monotonic() - t_wait_tb < 2.0:
+                    rendered = window.evaluate_js(
+                        "Boolean(document.querySelector('#toolbox-nav-list [data-tool-id=\"secret_front\"]'))"
+                    )
+                    if bool(rendered):
+                        break
+                    time.sleep(0.05)
+
+                tools_to_check = [
+                    "secret_front",
+                    "stronghold_protocol",
+                    "reclamation",
+                    "event_shop",
+                    "auto_raise_potential",
+                ]
+
+                tool_results = []
+                for tool_id in tools_to_check:
+                    tool_res = window.evaluate_js(
+                        f"""
+                        (function() {{
+                            var selector = '[data-tool-id="{tool_id}"], #tool-item-{tool_id}, .toolbox-item[data-id="{tool_id}"]';
+                            var item = document.querySelector(selector);
+                            if (item) {{
+                                item.click();
+                            }}
+                            var detail = document.getElementById('toolbox-detail-card') || document.querySelector('.toolbox-detail');
+                            var startBtn = document.getElementById('btn-start-toolbox') || document.querySelector('.btn-start-toolbox');
+                            var secBtn = document.getElementById('btn-toolbox-secondary') || document.querySelector('.btn-toolbox-secondary');
+                            var h = detail ? detail.offsetHeight : 0;
+                            var sw = detail ? detail.scrollWidth : 0;
+                            var cw = detail ? detail.clientWidth : 0;
+                            var btnVisible = Boolean(startBtn && (startBtn.offsetParent !== null || window.getComputedStyle(startBtn).display !== 'none'));
+                            var secVisible = Boolean(secBtn && secBtn.offsetParent !== null && window.getComputedStyle(secBtn).display !== 'none');
+                            var secBtnOk = ("{tool_id}" === "reclamation") ? secVisible : (!secBtn || secBtn.offsetParent === null || window.getComputedStyle(secBtn).display === 'none');
+                            return {{
+                                tool_id: "{tool_id}",
+                                item_found: Boolean(item),
+                                detail_height: h,
+                                scroll_width: sw,
+                                client_width: cw,
+                                no_overflow: sw <= (cw + 2),
+                                start_btn_visible: btnVisible,
+                                sec_btn_visible: secVisible,
+                                sec_btn_ok: secBtnOk,
+                                ok: Boolean(item && detail && h > 100 && (sw <= cw + 2) && btnVisible && secBtnOk)
+                            }};
+                        }})()
+                        """
+                    )
+                    time.sleep(0.1)
+                    tool_results.append(tool_res)
+                    if tool_id == "stronghold_protocol":
+                        _capture_screenshot("smoke_toolbox_stronghold")
+
+                _capture_screenshot("smoke_toolbox_960x640")
+
+                # Check category labels: non-empty and no 'undefined'
+                category_labels_check = window.evaluate_js(
+                    """
+                    (function() {
+                        var labels = document.querySelectorAll('#page-toolbox .toolbox-category-label');
+                        if (!labels || labels.length === 0) return { ok: false, count: 0, reason: 'no category labels found' };
+                        for (var i = 0; i < labels.length; i++) {
+                            var txt = (labels[i].textContent || '').trim();
+                            if (!txt || txt.indexOf('undefined') !== -1) {
+                                return { ok: false, count: labels.length, bad_text: txt };
+                            }
+                        }
+                        return { ok: true, count: labels.length };
+                    })()
+                    """
+                )
+                category_labels_ok = isinstance(category_labels_check, dict) and bool(category_labels_check.get("ok"))
+
+                # Test 920x600 for zero horizontal overflow
+                window.resize(920, 600)
+                time.sleep(0.25)
+                res_920_tb = window.evaluate_js(
+                    """
+                    (function() {
+                        var detail = document.getElementById('toolbox-detail-card') || document.querySelector('.toolbox-detail');
+                        var h = detail ? detail.offsetHeight : 0;
+                        var sw = detail ? detail.scrollWidth : 0;
+                        var cw = detail ? detail.clientWidth : 0;
+                        return {
+                            detail_height: h,
+                            scroll_width: sw,
+                            client_width: cw,
+                            no_overflow: sw <= (cw + 2),
+                            ok: Boolean(detail && h > 100 && (sw <= cw + 2))
+                        };
+                    })()
+                    """
+                )
+
+                tb_console_errors = []
+                try:
+                    ce_tb = window.evaluate_js("window.__prtsConsoleErrors ? window.__prtsConsoleErrors.slice() : []")
+                    if isinstance(ce_tb, list):
+                        tb_console_errors = [str(x) for x in ce_tb]
+                except Exception:
+                    pass
+
+                all_tools_ok = all(isinstance(r, dict) and bool(r.get("ok")) for r in tool_results)
+                res_920_ok = isinstance(res_920_tb, dict) and bool(res_920_tb.get("ok"))
+                no_console_err = len(tb_console_errors) == 0
+
+                toolbox_page_check = {
+                    "ok": bool(all_tools_ok and res_920_ok and no_console_err and category_labels_ok),
+                    "tools_checked": tool_results,
+                    "res_920": res_920_tb,
+                    "category_labels_check": category_labels_check,
+                    "category_labels_ok": category_labels_ok,
+                    "console_error_count": len(tb_console_errors),
+                }
+
+                # Switch back to page-overview
+                window.evaluate_js(
+                    "var nav = document.querySelector('[data-page=\"page-overview\"]');"
+                    "if (nav) nav.click(); else if (window.switchPage) window.switchPage('page-overview');"
+                )
+                time.sleep(0.15)
+            except Exception as exc:
+                toolbox_page_check = {"ok": False, "error": str(exc)}
 
             # 5. Check Agent modal prompts and README Tab 2
             agent_check: Any = None
@@ -783,6 +978,8 @@ def run_desktop_app(open_wizard_force: bool = False, smoke_test_output: Optional
                 and isinstance(button_radius_check, dict) and bool(button_radius_check.get("ok"))
                 and isinstance(theme_motion_check, dict) and bool(theme_motion_check.get("ok"))
                 and isinstance(raf_radius_sample, dict) and bool(raf_radius_sample.get("ok"))
+                and isinstance(toolbox_page_check, dict) and bool(toolbox_page_check.get("ok"))
+                and isinstance(dry_run_ui_check, dict) and bool(dry_run_ui_check.get("ok"))
             )
             if not checks_ok:
                 smoke_exit_code[0] = 1
@@ -801,6 +998,8 @@ def run_desktop_app(open_wizard_force: bool = False, smoke_test_output: Optional
                 "button_radius_check": button_radius_check,
                 "theme_motion_check": theme_motion_check,
                 "raf_radius_sample": raf_radius_sample,
+                "toolbox_page_check": toolbox_page_check,
+                "dry_run_ui_check": dry_run_ui_check,
                 "smoke_1120x740": res_1120,
                 "smoke_960x640": res_960,
                 "smoke_920x600": res_920,

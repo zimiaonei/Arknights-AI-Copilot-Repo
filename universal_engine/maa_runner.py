@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from . import ai_strategist, auto_growth, roguelike_ai_copilot, stage_pilot
+from .utils import runtime_guard
 from .utils.env_doctor import (
     DEFAULT_ADB_CMD_TIMEOUT,
     SERVER_PACKAGES,
@@ -478,6 +479,16 @@ def ensure_game_running(
     """Ensure Arknights (Official or Bilibili) is in foreground on connected device."""
     if cancel_event is not None and cancel_event.is_set():
         raise OperationCancelledError("启动游戏前置检测已取消")
+    _dry_ctx = runtime_guard.get_active_dry_run_context()
+    if _dry_ctx is not None:
+        _spec = get_server_spec(config)
+        _dry_ctx.intercept_control(
+            "ensure_game_running",
+            detail=f"跳过 dumpsys/am start ({_spec['package']}/{_spec['activity']})",
+            command=["am", "start", "-n", f"{_spec['package']}/{_spec['activity']}"],
+            log_callback=log_callback,
+        )
+        return _spec["package"]
     info = env_info or ensure_emulator_ready(
         config, maa_dir=maa_dir, cancel_event=cancel_event, log_callback=log_callback
     )
@@ -551,6 +562,9 @@ def execute_post_action(
     act = str(action or config.get("post_action") or "none").strip().lower()
     if act not in ("none", "close_emulator", "shutdown"):
         act = "none"
+    _dry_ctx = runtime_guard.get_active_dry_run_context()
+    if dry_run or runtime_guard.is_dry_run_enabled():
+        dry_run = True
 
     if act == "none":
         return {"action": "none", "executed": False, "dry_run": dry_run, "command": [], "detail": "无后续动作"}
@@ -561,6 +575,8 @@ def execute_post_action(
         else:
             cmd = ["shutdown", "-h", "+1"]
         if dry_run:
+            if _dry_ctx is not None:
+                return _dry_ctx.intercept_control("shutdown", detail="Dry-run 关机命令已就绪", command=cmd)
             return {"action": "shutdown", "executed": False, "dry_run": True, "command": cmd, "detail": "Dry-run 关机命令已就绪"}
         res = _run_cmd(cmd, timeout=10)
         return {"action": "shutdown", "executed": res.returncode == 0, "dry_run": False, "command": cmd, "detail": (res.stdout or res.stderr or "").strip()}
@@ -582,6 +598,8 @@ def execute_post_action(
             cmd = [exe_path, "quit", "--index", idx]
 
     if dry_run:
+        if _dry_ctx is not None:
+            return _dry_ctx.intercept_control("close_emulator", detail="Dry-run 关闭模拟器命令已就绪", command=cmd)
         return {"action": "close_emulator", "executed": False, "dry_run": True, "command": cmd, "detail": "Dry-run 关闭模拟器命令已就绪"}
 
     res = _run_cmd(cmd, timeout=15)
@@ -595,6 +613,8 @@ def execute_post_action(
 
 
 def _notify_windows_alert(title: str, message: str) -> None:
+    if runtime_guard.is_dry_run_enabled():
+        return
     if sys.platform != "win32":
         return
     try:
@@ -649,6 +669,10 @@ def send_webhook_notification(
             "extra": extra or {},
         }
 
+    _dry_ctx = runtime_guard.get_active_dry_run_context()
+    if _dry_ctx is not None:
+        return _dry_ctx.intercept_webhook(url, title, content, event_type=event_type, body=body)
+
     req = urllib.request.Request(
         url,
         data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
@@ -691,6 +715,7 @@ class MaaSession:
         self.adb_path: str = ""
         self.adb_addr: str = ""
         self._early_stop_reason: str = ""
+        self._dry_run_mode: bool = False
 
     def request_early_stop(self, reason: str) -> None:
         """Signal the active run_single_task loop to stop MaaCore gracefully without marking user-cancelled."""
@@ -742,6 +767,27 @@ class MaaSession:
     def connect(self, env_info: Optional[Dict[str, Any]] = None) -> bool:
         if self.cancel_event is not None and self.cancel_event.is_set():
             return False
+        if runtime_guard.is_dry_run_enabled():
+            self._dry_run_mode = True
+            try:
+                probe = env_info or probe_and_ensure_adb_ready(
+                    self.config,
+                    maa_dir=self.maa_dir,
+                    timeout_sec=5,
+                    cancel_event=self.cancel_event,
+                    log_callback=self._emit_log,
+                    auto_launch=False,
+                )
+                if probe.get("connected", probe.get("ready")) or env_info:
+                    self.adb_path = str(probe.get("adb_path") or "")
+                    self.adb_addr = str(probe.get("adb_addr") or probe.get("adb_address") or "")
+                else:
+                    self._emit_log("[DRY-RUN] 模拟器未连接，将以离线参数演习模式继续")
+            except OperationCancelledError:
+                return False
+            except Exception:
+                self._emit_log("[DRY-RUN] 模拟器未连接，将以离线参数演习模式继续")
+            return True
         info = env_info or ensure_emulator_ready(
             self.config,
             maa_dir=self.maa_dir,
@@ -891,6 +937,26 @@ class MaaSession:
         tick_callback: Optional[Callable[["MaaSession", List[Dict[str, Any]]], None]] = None,
         detect_network_disconnect: bool = True,
     ) -> Dict[str, Any]:
+        _dry_ctx = runtime_guard.get_active_dry_run_context()
+        if _dry_ctx is not None or self._dry_run_mode:
+            if _dry_ctx is None:
+                _dry_ctx = runtime_guard.DryRunContext(enabled=True, base_dir=self.base_dir, log_callback=self._emit_log)
+            shot_img = None
+            if self.adb_path and self.adb_addr:
+                try:
+                    shot_img = stage_pilot.adb_screencap_image(
+                        self.adb_path, self.adb_addr, timeout=3.0, cancel_event=self.cancel_event
+                    )
+                except Exception:
+                    shot_img = None
+            return _dry_ctx.intercept_task(
+                task_type,
+                params,
+                adb_path=self.adb_path,
+                adb_addr=self.adb_addr,
+                screenshot_img=shot_img,
+                log_callback=self._emit_log,
+            )
         if self._asst is None:
             raise RuntimeError("MaaSession 尚未 connect")
 
@@ -1135,6 +1201,15 @@ def _force_restart_game_client(
     spec = get_server_spec(config)
     pkg = spec["package"]
     act = spec["activity"]
+    _dry_ctx = runtime_guard.get_active_dry_run_context()
+    if _dry_ctx is not None:
+        _dry_ctx.intercept_control(
+            "force_restart_game_client",
+            detail=f"跳过 am force-stop/start {pkg}",
+            command=["am", "force-stop", pkg],
+            log_callback=log_callback,
+        )
+        return True
     if log_callback:
         try:
             log_callback(f"[NET] 正在强制重启游戏客户端 ({pkg}) 以清除异常网络状态...")

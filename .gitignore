@@ -59,3 +59,10 @@ Python/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local real-device screenshots & replay fixtures (never commit personal game captures)
+local_fixtures/
+**/local_fixtures/
+reports/replay_debug/
+*.bmp
+*.webp

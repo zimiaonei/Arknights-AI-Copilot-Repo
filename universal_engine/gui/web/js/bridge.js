@@ -34,6 +34,7 @@
       return Promise.resolve({
         snapshot: {
           config: {},
+          dry_run: false,
           maa_dir: '<示例路径>/MAA',
           maa: { valid: true, version: 'v6.17.5', reason: '' },
           adb: { connected: true, adb_address: '127.0.0.1:16384', width: 1280, height: 720, is_16_9: true, mumu_adbd_hung: false, warning: '' },
@@ -147,6 +148,11 @@
       });
     },
     refresh_snapshot: function () { return Promise.resolve({ ok: true }); },
+    set_dry_run: function (enabled) {
+      var on = Boolean(enabled);
+      fallbackMockApi._dry_run = on;
+      return Promise.resolve({ ok: true, dry_run: on, snapshot: { dry_run: on } });
+    },
     start_daily: function () { return Promise.resolve({ ok: true }); },
     start_auto_growth: function () { return Promise.resolve({ ok: true }); },
     preview_growth_plan: function () { return Promise.resolve({ ok: true, plan: [] }); },
@@ -254,7 +260,233 @@
     wizard_finish: function () { return Promise.resolve({ ok: true }); },
     get_logs: function () { return Promise.resolve({ logs: [] }); },
     clear_logs: function () { return Promise.resolve({ ok: true }); },
-    report_smoke_metrics: function () { return Promise.resolve({ ok: true }); }
+    report_smoke_metrics: function () { return Promise.resolve({ ok: true }); },
+    get_toolbox_catalog: function () {
+      return Promise.resolve({
+        ok: true,
+        maa_version: 'v6.23.2',
+        activity_name: '喀兰贸易技术研发部',
+        categories: [
+          {
+            key: 'current_event',
+            title: '当期活动',
+            items: [
+              {
+                id: 'os_karlan',
+                name: 'OS-喀兰贸易技术研发部',
+                category: 'current_event',
+                available: true,
+                task_kind: 'custom',
+                version_req: 'MAA v6.20.0+',
+                summary: '全自动完成当期喀兰贸易研发小游戏任务。',
+                notices: ['请先进入喀兰贸易活动主界面后再点击启动。'],
+                meta: {},
+                has_params: false,
+                params: {}
+              },
+              {
+                id: 'blackflow_money',
+                name: '黑流树海刷钱',
+                category: 'current_event',
+                available: true,
+                task_kind: 'roguelike',
+                version_req: 'MAA v6.17.0+',
+                summary: '沉沦者的黑流树海源石锭投资预设，自动进出快速存钱。',
+                notices: ['进入萨卡兹肉鸽主界面后启动，支持存满即停。'],
+                meta: {},
+                has_params: true,
+                params: { stop_when_investment_full: true, starts_count: 999 }
+              }
+            ]
+          },
+          {
+            key: 'permanent_event',
+            title: '常驻活动',
+            items: [
+              {
+                id: 'secret_front',
+                name: '隐秘战线',
+                category: 'permanent_event',
+                available: true,
+                task_kind: 'custom',
+                version_req: 'MAA v6.20.0+',
+                summary: '全自动攻略隐秘战线各结局与优先事件。',
+                notices: ['请在选小队界面开始，如有进行中存档须先手动删除后再启动。'],
+                meta: {},
+                has_params: true,
+                params: { ending: 'EndingE', priority_event: '' }
+              },
+              {
+                id: 'stronghold_protocol',
+                name: '卫戍协议',
+                category: 'permanent_event',
+                available: true,
+                task_kind: 'custom',
+                version_req: 'MAA v6.22.0+',
+                summary: '卫戍协议全自动刷角标（完整通关）与速通刷分。',
+                notices: ['进入卫戍协议主界面后启动，若刷角标建议备齐推荐干员。'],
+                meta: {
+                  themes: [
+                    { label: '主题：规程 (Regulation)', value: 'Regulation' }
+                  ],
+                  recommended_operators: '推荐干员：维什戴尔、玛恩纳、锏、纯烬艾雅法拉'
+                },
+                has_params: true,
+                params: { theme: 'Regulation', mode: 'badge', target: 3, runs: 60, attempts: 0 }
+              },
+              {
+                id: 'reclamation',
+                name: '生息演算',
+                category: 'permanent_event',
+                available: true,
+                task_kind: 'reclamation',
+                version_req: 'MAA v6.15.0+',
+                summary: '生息演算关卡循环（RA-1/4/15）与沙洲遗闻刷取，支持自动搬空商店。',
+                notices: ['与主面板「肉鸽与生息」页共享配置与运行状态。'],
+                meta: {},
+                has_params: true,
+                params: { theme: 'RelaunchAnchor', mode: 'RA1', clear_store: true }
+              }
+            ]
+          },
+          {
+            key: 'permanent_utility',
+            title: '常驻功能',
+            items: [
+              {
+                id: 'event_shop',
+                name: '活动商店',
+                category: 'permanent_utility',
+                available: true,
+                task_kind: 'custom',
+                version_req: 'MAA v6.18.0+',
+                summary: '全自动兑换当期活动商店物品，支持黑名单排除。',
+                notices: ['请在活动商店兑换界面开始。'],
+                meta: {},
+                has_params: true,
+                params: { blacklist_presets: [], custom_blacklist: '' }
+              },
+              {
+                id: 'green_ticket_shop',
+                name: '绿票商店',
+                category: 'permanent_utility',
+                available: true,
+                task_kind: 'custom',
+                version_req: 'MAA v6.17.0+',
+                summary: '全自动购买采购中心资质凭证商店物品（1层全买，2层购买寻访凭证和招聘许可）。',
+                notices: ['请在采购中心或主界面启动。'],
+                meta: {},
+                has_params: false,
+                params: {}
+              },
+              {
+                id: 'yellow_ticket_shop',
+                name: '黄票商店',
+                category: 'permanent_utility',
+                available: true,
+                task_kind: 'custom',
+                version_req: 'MAA v6.17.0+',
+                summary: '全自动购买高级资质凭证商店中的寻访凭证（单抽及十连，共38抽）。',
+                notices: ['请确认黄票储备充足，启动后在采购中心界面自动兑换。'],
+                meta: {},
+                has_params: false,
+                params: {}
+              },
+              {
+                id: 'auto_raise_potential',
+                name: '自动提升潜能',
+                category: 'permanent_utility',
+                available: true,
+                task_kind: 'custom',
+                version_req: 'MAA v6.20.0+',
+                summary: '全自动扫描并消耗干员信物提升潜能。',
+                notices: ['请在干员列表界面启动。'],
+                meta: {},
+                has_params: true,
+                params: { use_normal_token: false }
+              },
+              {
+                id: 'material_synthesis',
+                name: '缺口材料合成',
+                category: 'permanent_utility',
+                available: true,
+                task_kind: 'custom',
+                version_req: 'MAA v6.19.0+',
+                summary: '根据仓库物资与未满足的精二/专精需求自动批量合成下级材料。',
+                notices: ['请在基建加工站界面启动。'],
+                meta: {},
+                has_params: false,
+                params: {}
+              },
+              {
+                id: 'cursed_relic',
+                name: '刷傀影维多利亚皇冠',
+                category: 'permanent_utility',
+                available: true,
+                task_kind: 'custom',
+                version_req: 'MAA v6.21.0+',
+                summary: '萨卡兹肉鸽诅咒藏品全自动解咒与刷取皇冠。',
+                notices: ['请在集成战略持有诅咒藏品状态下启动。'],
+                meta: {},
+                has_params: false,
+                params: {}
+              },
+              {
+                id: 'ra_store',
+                name: '生息演算商店',
+                category: 'permanent_utility',
+                available: true,
+                task_kind: 'custom',
+                version_req: 'MAA v6.15.0+',
+                summary: '自动清空生息演算黑市可用代币与兑换商店物资。',
+                notices: ['请在生息演算黑市商店界面启动。'],
+                meta: {},
+                has_params: false,
+                params: {}
+              }
+            ]
+          }
+        ],
+        toolbox_config: {
+          secret_front: { ending: 'EndingE', priority_event: '' },
+          stronghold_protocol: { theme: 'Regulation', mode: 'badge', target: 3, runs: 60, attempts: 0 },
+          event_shop: { blacklist_presets: [], custom_blacklist: '' },
+          auto_raise_potential: { use_normal_token: false },
+          blackflow_money: { stop_when_investment_full: true, starts_count: 999 }
+        },
+        reclamation: {
+          theme: 'RelaunchAnchor',
+          theme_display: '重启锚点',
+          mode_label: 'RA1',
+          mode_display: 'RA-1 关卡循环 (RA1 · 精耕细作)',
+          badge_text: '精耕细作',
+          clear_store: true,
+          loaded_from_gui_config: true,
+          sub_hint: '已就绪'
+        }
+      });
+    },
+    save_toolbox_config: function () {
+      return Promise.resolve({ ok: true });
+    },
+    start_toolbox_task: function () {
+      return Promise.resolve({
+        ok: true,
+        task_state: {
+          running: true,
+          task_kind: 'custom',
+          status_text: '小工具任务执行中...',
+          progress_mode: 'indeterminate',
+          progress_value: 0,
+          progress_cur: 0,
+          progress_total: 0,
+          level: 'info',
+          ra_button_text: '启动生息演算',
+          ra_button_enabled: false,
+          stop_enabled: true
+        }
+      });
+    }
   };
 
   var listeners = {};
@@ -278,6 +510,9 @@
       } catch (err) {
         return Promise.reject(err);
       }
+    }
+    if (api !== fallbackMockApi && typeof fallbackMockApi[methodName] === 'function') {
+      return Promise.resolve(fallbackMockApi[methodName].apply(fallbackMockApi, args || []));
     }
     console.warn('[Bridge] Method not found on API:', methodName);
     return Promise.reject(new Error('Method ' + methodName + ' not supported'));
@@ -396,6 +631,7 @@
     // Method wrappers matching contract.FROZEN_BRIDGE_METHODS exactly
     getInitialState: function () { return callBridgeMethod('get_initial_state'); },
     refreshSnapshot: function (checkAdb) { return callBridgeMethod('refresh_snapshot', [Boolean(checkAdb)]); },
+    setDryRun: function (enabled) { return callBridgeMethod('set_dry_run', [Boolean(enabled)]); },
     startDaily: function () { return callBridgeMethod('start_daily'); },
     startAutoGrowth: function () { return callBridgeMethod('start_auto_growth'); },
     previewGrowthPlan: function () { return callBridgeMethod('preview_growth_plan'); },
@@ -441,7 +677,10 @@
     wizardFinish: function (payload) { return callBridgeMethod('wizard_finish', [payload]); },
     getLogs: function () { return callBridgeMethod('get_logs'); },
     clearLogs: function () { return callBridgeMethod('clear_logs'); },
-    reportSmokeMetrics: function (metrics) { return callBridgeMethod('report_smoke_metrics', [metrics]); }
+    reportSmokeMetrics: function (metrics) { return callBridgeMethod('report_smoke_metrics', [metrics]); },
+    getToolboxCatalog: function () { return callBridgeMethod('get_toolbox_catalog'); },
+    saveToolboxConfig: function (toolId, params) { return callBridgeMethod('save_toolbox_config', [String(toolId || ''), params || {}]); },
+    startToolboxTask: function (toolId, params) { return callBridgeMethod('start_toolbox_task', [String(toolId || ''), params || null]); }
   };
 
   window.PrtsBridge = PrtsBridge;
